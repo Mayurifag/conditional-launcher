@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 pub struct ConditionStatus {
     pub internet_ok: bool,
@@ -70,6 +71,7 @@ pub struct ConditionalLauncherApp {
     available_partitions: Vec<PartitionInfo>,
     texture_cache: HashMap<String, egui::TextureHandle>,
     last_autostart_check: Option<SystemTime>,
+    sys: System,
 }
 
 fn load_icon<'a>(
@@ -160,6 +162,7 @@ impl ConditionalLauncherApp {
             available_partitions,
             texture_cache: HashMap::new(),
             last_autostart_check: None,
+            sys: System::new_all(),
         }
     }
 
@@ -172,6 +175,9 @@ impl eframe::App for ConditionalLauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
         ctx.request_repaint_after(std::time::Duration::from_secs(5));
+        self.sys.refresh_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
 
         let autostart_path = dirs::config_dir().unwrap().join("autostart");
         if let Ok(metadata) = fs::metadata(&autostart_path) {
@@ -232,7 +238,23 @@ impl eframe::App for ConditionalLauncherApp {
                                         },
                                     );
                                 });
-                                ui.label(egui::RichText::new(&app.command).small().monospace());
+
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(&app.command).small().monospace());
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            let is_running =
+                                                self.os_ops.is_app_running(app, &self.sys);
+                                            if !is_running {
+                                                if ui.button("Run").clicked() {
+                                                    self.os_ops.launch_app(app);
+                                                }
+                                            }
+                                        },
+                                    );
+                                });
+
                                 if let Some(wd) = &app.working_dir {
                                     ui.label(
                                         egui::RichText::new(format!(
@@ -244,9 +266,7 @@ impl eframe::App for ConditionalLauncherApp {
                                     );
                                 }
 
-                                ui.add_space(5.0);
                                 ui.separator();
-                                ui.add_space(5.0);
 
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut app.conditions.internet, "Internet");
@@ -353,7 +373,21 @@ impl eframe::App for ConditionalLauncherApp {
                                     },
                                 );
                             });
-                            ui.label(egui::RichText::new(&app.command).small().monospace());
+
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&app.command).small().monospace());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let is_running = self.os_ops.is_app_running(app, &self.sys);
+                                        if !is_running {
+                                            if ui.button("Run").clicked() {
+                                                self.os_ops.launch_app(app);
+                                            }
+                                        }
+                                    },
+                                );
+                            });
                         });
                     }
 

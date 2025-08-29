@@ -716,6 +716,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "freedesktop-icons",
  "image",
+ "libc",
  "resvg",
  "serde",
  "sysinfo",

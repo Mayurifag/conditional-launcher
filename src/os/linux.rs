@@ -3,9 +3,10 @@ use crate::config::AppConfig;
 use freedesktop_desktop_entry::DesktopEntry;
 use std::env;
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use sysinfo::Disks;
+use sysinfo::{Disks, System};
 
 pub struct LinuxOperations;
 
@@ -54,6 +55,21 @@ impl OsOperations for LinuxOperations {
         if let Some(dir) = &app.working_dir {
             cmd.current_dir(dir);
         }
+
+        // Detach the process by creating a new session.
+        // This is necessary to prevent the child process from being killed when the launcher exits.
+        // `pre_exec` is unsafe because it runs in the child process right before exec.
+        // Any allocation or lock usage can cause deadlocks. `setsid` is a safe syscall to use here.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+
         let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
 
@@ -168,5 +184,37 @@ impl OsOperations for LinuxOperations {
                 fs::remove_file(path).ok();
             }
         }
+    }
+
+    fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool {
+        if let Some(process_name) = app
+            .command
+            .split_whitespace()
+            .next()
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|f| f.to_str())
+        {
+            if sys
+                .processes_by_name(process_name.as_ref())
+                .next()
+                .is_some()
+            {
+                return true;
+            }
+        }
+
+        if sys.processes_by_name(app.name.as_ref()).next().is_some() {
+            return true;
+        }
+
+        if sys
+            .processes_by_name(app.name.to_lowercase().as_ref())
+            .next()
+            .is_some()
+        {
+            return true;
+        }
+
+        false
     }
 }

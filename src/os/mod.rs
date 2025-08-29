@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use sysinfo::System;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -22,6 +23,7 @@ pub trait OsOperations {
     fn open_config_dir(&self);
     fn add_self_to_autostart(&self);
     fn remove_self_from_autostart(&self);
+    fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool;
 }
 
 pub fn get_os_operations() -> Box<dyn OsOperations> {
@@ -55,6 +57,9 @@ pub fn get_os_operations() -> Box<dyn OsOperations> {
             fn open_config_dir(&self) {}
             fn add_self_to_autostart(&self) {}
             fn remove_self_from_autostart(&self) {}
+            fn is_app_running(&self, _app: &AppConfig, _sys: &System) -> bool {
+                false
+            }
         }
         Box::new(UnsupportedOperations)
     }
