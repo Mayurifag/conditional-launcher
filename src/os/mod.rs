@@ -20,6 +20,8 @@ pub trait OsOperations {
     fn unmanage_app(&self, app: &AppConfig) -> bool;
     fn get_partitions(&self) -> Vec<PartitionInfo>;
     fn open_config_dir(&self);
+    fn add_self_to_autostart(&self);
+    fn remove_self_from_autostart(&self);
 }
 
 pub fn get_os_operations() -> Box<dyn OsOperations> {
@@ -51,6 +53,8 @@ pub fn get_os_operations() -> Box<dyn OsOperations> {
                 vec![]
             }
             fn open_config_dir(&self) {}
+            fn add_self_to_autostart(&self) {}
+            fn remove_self_from_autostart(&self) {}
         }
         Box::new(UnsupportedOperations)
     }

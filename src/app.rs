@@ -7,9 +7,60 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-struct ConditionStatus {
-    internet_ok: bool,
-    partition_ok: bool,
+pub struct ConditionStatus {
+    pub internet_ok: bool,
+    pub partition_ok: bool,
+}
+
+pub fn perform_launch_checks(
+    os_ops: &dyn OsOperations,
+    managed_apps: &mut [AppConfig],
+) -> Vec<ConditionStatus> {
+    let has_internet = os_ops.check_internet_connection();
+    let mut statuses = Vec::new();
+
+    for app in managed_apps.iter_mut() {
+        let partition_ok = app
+            .conditions
+            .partition_mounted
+            .as_ref()
+            .map_or(true, |p| os_ops.is_partition_mounted(p));
+
+        let internet_ok = !app.conditions.internet || has_internet;
+
+        statuses.push(ConditionStatus {
+            internet_ok,
+            partition_ok,
+        });
+
+        if !app.launched && internet_ok && partition_ok {
+            os_ops.launch_app(app);
+            app.launched = true;
+        }
+    }
+    statuses
+}
+
+pub fn get_condition_statuses(
+    os_ops: &dyn OsOperations,
+    managed_apps: &[AppConfig],
+) -> Vec<ConditionStatus> {
+    let has_internet = os_ops.check_internet_connection();
+    let mut statuses = Vec::new();
+
+    for app in managed_apps.iter() {
+        let partition_ok = app
+            .conditions
+            .partition_mounted
+            .as_ref()
+            .map_or(true, |p| os_ops.is_partition_mounted(p));
+        let internet_ok = !app.conditions.internet || has_internet;
+        statuses.push(ConditionStatus {
+            internet_ok,
+            partition_ok,
+        });
+    }
+    statuses
 }
 
 pub struct ConditionalLauncherApp {
@@ -71,7 +122,7 @@ impl ConditionalLauncherApp {
             .join("conditional-launcher/managed_apps.toml")
     }
 
-    fn load_config() -> Vec<AppConfig> {
+    pub fn load_config() -> Vec<AppConfig> {
         fs::read_to_string(Self::config_path())
             .ok()
             .and_then(|toml_str| toml::from_str::<Config>(&toml_str).ok())
@@ -79,15 +130,21 @@ impl ConditionalLauncherApp {
             .unwrap_or_default()
     }
 
-    fn save_config(managed_apps: &Vec<AppConfig>) {
+    fn save_config(&mut self) {
         let config = Config {
-            apps: managed_apps.clone(),
+            apps: self.managed_apps.clone(),
         };
         if let Some(parent) = Self::config_path().parent() {
             fs::create_dir_all(parent).ok();
         }
         let toml = toml::to_string_pretty(&config).unwrap();
         fs::write(Self::config_path(), toml).ok();
+
+        if self.managed_apps.is_empty() {
+            self.os_ops.remove_self_from_autostart();
+        } else {
+            self.os_ops.add_self_to_autostart();
+        }
     }
 
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
@@ -126,39 +183,7 @@ impl eframe::App for ConditionalLauncherApp {
             }
         }
 
-        let Self {
-            managed_apps,
-            unmanaged_apps,
-            os_ops,
-            available_partitions,
-            texture_cache,
-            ..
-        } = self;
-
-        let has_internet = os_ops.check_internet_connection();
-        let mut condition_statuses: Vec<ConditionStatus> = Vec::new();
-
-        for app in managed_apps.iter() {
-            let partition_ok = app
-                .conditions
-                .partition_mounted
-                .as_ref()
-                .map_or(true, |p| os_ops.is_partition_mounted(p));
-            condition_statuses.push(ConditionStatus {
-                internet_ok: !app.conditions.internet || has_internet,
-                partition_ok,
-            });
-        }
-
-        for (i, app) in managed_apps.iter_mut().enumerate() {
-            if !app.launched {
-                let status = &condition_statuses[i];
-                if status.internet_ok && status.partition_ok {
-                    os_ops.launch_app(app);
-                    app.launched = true;
-                }
-            }
-        }
+        let condition_statuses = get_condition_statuses(self.os_ops.as_ref(), &self.managed_apps);
 
         let panel_frame = egui::Frame {
             inner_margin: egui::Margin::symmetric(10, 10),
@@ -168,31 +193,20 @@ impl eframe::App for ConditionalLauncherApp {
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("Autostart");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Open Config Folder").clicked() {
-                            os_ops.open_config_dir();
-                        }
-                    });
-                });
-                ui.add_space(10.0);
-                ui.separator();
-
                 let scroll_area_response = egui::ScrollArea::vertical().show(ui, |ui| {
-                    if !managed_apps.is_empty() {
+                    if !self.managed_apps.is_empty() {
                         ui.add_space(10.0);
                         ui.heading("Managed by Launcher");
                         ui.add_space(5.0);
 
                         let mut revert_app_index: Option<usize> = None;
-                        for (i, app) in managed_apps.iter_mut().enumerate() {
+                        for (i, app) in self.managed_apps.iter_mut().enumerate() {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     let mut icon_shown = false;
                                     if let Some(icon_name) = &app.icon {
                                         if let Some(texture) =
-                                            load_icon(texture_cache, ctx, icon_name)
+                                            load_icon(&mut self.texture_cache, ctx, icon_name)
                                         {
                                             ui.add(
                                                 egui::Image::new(texture)
@@ -261,19 +275,21 @@ impl eframe::App for ConditionalLauncherApp {
                                                 None,
                                                 "None",
                                             );
-                                            for p in available_partitions.iter() {
-                                                let label = if p.label.is_empty() {
-                                                    p.mount_point.clone()
+                                            for p in self.available_partitions.iter() {
+                                                let display_label = if p.label.is_empty() {
+                                                    &p.mount_point
                                                 } else {
-                                                    p.label.clone()
+                                                    &p.label
+                                                };
+                                                let details = if p.fs_type.is_empty() {
+                                                    format!("({})", p.size)
+                                                } else {
+                                                    format!("({}, {})", p.fs_type, p.size)
                                                 };
                                                 ui.selectable_value(
                                                     &mut app.conditions.partition_mounted,
                                                     Some(p.mount_point.clone()),
-                                                    format!(
-                                                        "{} ({}, {})",
-                                                        label, p.fs_type, p.size
-                                                    ),
+                                                    format!("{} {}", display_label, details),
                                                 );
                                             }
                                         });
@@ -289,28 +305,29 @@ impl eframe::App for ConditionalLauncherApp {
                             });
                         }
                         if let Some(index) = revert_app_index {
-                            if os_ops.unmanage_app(&managed_apps[index]) {
-                                unmanaged_apps.push(managed_apps.remove(index));
-                                Self::save_config(managed_apps);
+                            if self.os_ops.unmanage_app(&self.managed_apps[index]) {
+                                self.unmanaged_apps.push(self.managed_apps.remove(index));
+                                self.save_config();
                             }
                         }
                     }
 
                     ui.add_space(10.0);
-                    ui.heading("System Autostart Apps");
+                    ui.heading("User autostart entries");
                     ui.add_space(5.0);
 
-                    if unmanaged_apps.is_empty() {
-                        ui.label("No unmanaged system autostart apps found.");
+                    if self.unmanaged_apps.is_empty() {
+                        ui.label("No unmanaged user autostart apps found.");
                     }
 
                     let mut manage_app_index: Option<usize> = None;
-                    for (i, app) in unmanaged_apps.iter().enumerate() {
+                    for (i, app) in self.unmanaged_apps.iter().enumerate() {
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
                                 let mut icon_shown = false;
                                 if let Some(icon_name) = &app.icon {
-                                    if let Some(texture) = load_icon(texture_cache, ctx, icon_name)
+                                    if let Some(texture) =
+                                        load_icon(&mut self.texture_cache, ctx, icon_name)
                                     {
                                         ui.add(
                                             egui::Image::new(texture)
@@ -341,9 +358,9 @@ impl eframe::App for ConditionalLauncherApp {
                     }
 
                     if let Some(index) = manage_app_index {
-                        if os_ops.manage_app(&unmanaged_apps[index]) {
-                            managed_apps.push(unmanaged_apps.remove(index));
-                            Self::save_config(managed_apps);
+                        if self.os_ops.manage_app(&self.unmanaged_apps[index]) {
+                            self.managed_apps.push(self.unmanaged_apps.remove(index));
+                            self.save_config();
                         }
                     }
                 });

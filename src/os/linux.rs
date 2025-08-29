@@ -1,12 +1,11 @@
 use super::{OsOperations, PartitionInfo};
 use crate::config::AppConfig;
 use freedesktop_desktop_entry::DesktopEntry;
-use std::collections::HashMap;
-use std::convert::TryInto;
+use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use zbus::blocking::Connection;
+use sysinfo::Disks;
 
 pub struct LinuxOperations;
 
@@ -26,18 +25,27 @@ impl LinuxOperations {
             launched: false,
         })
     }
+
+    fn launcher_desktop_file_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|d| d.join("autostart/conditional-launcher.desktop"))
+    }
 }
 
 impl OsOperations for LinuxOperations {
     fn check_internet_connection(&self) -> bool {
         Command::new("ping")
             .args(["-c", "1", "8.8.8.8"])
-            .output()
-            .map_or(false, |o| o.status.success())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_or(false, |s| s.success())
     }
 
     fn is_partition_mounted(&self, path: &str) -> bool {
-        fs::read_to_string("/proc/mounts").map_or(false, |m| m.lines().any(|l| l.contains(path)))
+        // Use the `Disks` struct from `sysinfo` for a reliable check.
+        let disks = Disks::new_with_refreshed_list();
+        let mount_path = Path::new(path);
+        disks.iter().any(|disk| disk.mount_point() == mount_path)
     }
 
     fn launch_app(&self, app: &AppConfig) {
@@ -56,6 +64,11 @@ impl OsOperations for LinuxOperations {
             if let Ok(entries) = fs::read_dir(autostart_dir) {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
+                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                        if file_name == "conditional-launcher.desktop" {
+                            continue;
+                        }
+                    }
                     if path.extension().map_or(false, |e| e == "desktop") {
                         if let Some(app_config) = Self::parse_desktop_file(path) {
                             apps.push(app_config);
@@ -86,70 +99,38 @@ impl OsOperations for LinuxOperations {
     }
 
     fn get_partitions(&self) -> Vec<PartitionInfo> {
-        let connection = match Connection::system() {
-            Ok(c) => c,
-            Err(_) => return vec![],
-        };
-
-        let proxy = match zbus::blocking::Proxy::new(
-            &connection,
-            "org.freedesktop.UDisks2",
-            "/org/freedesktop/UDisks2",
-            "org.freedesktop.DBus.ObjectManager",
-        ) {
-            Ok(p) => p,
-            Err(_) => return vec![],
-        };
-
-        type ManagedObjects = HashMap<
-            zbus::zvariant::OwnedObjectPath,
-            HashMap<String, HashMap<String, zbus::zvariant::OwnedValue>>,
-        >;
-        let objects: ManagedObjects = match proxy.call_method("GetManagedObjects", &()) {
-            Ok(msg) => msg.body().deserialize().unwrap_or_default(),
-            Err(_) => return vec![],
-        };
-
+        let disks = Disks::new_with_refreshed_list();
         let mut partitions = Vec::new();
-        for (_, interfaces) in objects {
-            if let (Some(fs_props), Some(block_props)) = (
-                interfaces.get("org.freedesktop.UDisks2.Filesystem"),
-                interfaces.get("org.freedesktop.UDisks2.Block"),
-            ) {
-                if let Some(mount_points_value) = fs_props.get("MountPoints") {
-                    if let Ok(mount_points) =
-                        TryInto::<Vec<Vec<u8>>>::try_into(mount_points_value.clone())
-                    {
-                        if let Some(bytes) = mount_points.get(0) {
-                            let mount_point = String::from_utf8_lossy(bytes).to_string();
-                            if mount_point.is_empty() {
-                                continue;
-                            }
-
-                            let label: String = block_props
-                                .get("IdLabel")
-                                .and_then(|v| v.clone().try_into().ok())
-                                .unwrap_or_default();
-                            let size_bytes: u64 = block_props
-                                .get("Size")
-                                .and_then(|v| v.clone().try_into().ok())
-                                .unwrap_or(0);
-                            let size = format!("{:.1} GB", size_bytes as f64 / 1_000_000_000.0);
-                            let fs_type: String = fs_props
-                                .get("IdType")
-                                .and_then(|v| v.clone().try_into().ok())
-                                .unwrap_or_default();
-
-                            partitions.push(PartitionInfo {
-                                mount_point,
-                                label,
-                                fs_type,
-                                size,
-                            });
-                        }
-                    }
-                }
+        for disk in disks.iter() {
+            let mount_point_str = disk.mount_point().to_string_lossy();
+            if !mount_point_str.starts_with('/') {
+                continue; // Skip non-standard mount points
             }
+
+            let fs_type_str = disk.file_system().to_string_lossy();
+
+            // Filter out unwanted virtual/temporary filesystems by name
+            if fs_type_str.starts_with("squashfs")
+                || fs_type_str.starts_with("overlay")
+                || fs_type_str.starts_with("tmpfs")
+                || fs_type_str.starts_with("devtmpfs")
+                || fs_type_str.starts_with("fuse.")
+            {
+                continue;
+            }
+
+            let mount_point = mount_point_str.to_string();
+            let label = disk.name().to_string_lossy().to_string();
+            let size_bytes = disk.total_space();
+            let size = format!("{:.1} GB", size_bytes as f64 / 1_000_000_000.0);
+            let fs_type = fs_type_str.to_string();
+
+            partitions.push(PartitionInfo {
+                mount_point,
+                label,
+                fs_type,
+                size,
+            });
         }
         partitions
     }
@@ -159,6 +140,32 @@ impl OsOperations for LinuxOperations {
             let path = config_dir.join("conditional-launcher");
             if fs::create_dir_all(&path).is_ok() {
                 let _ = Command::new("xdg-open").arg(path).spawn();
+            }
+        }
+    }
+
+    fn add_self_to_autostart(&self) {
+        if let (Some(path), Ok(exe_path)) = (Self::launcher_desktop_file_path(), env::current_exe())
+        {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).ok();
+            }
+            let content = format!(
+                "[Desktop Entry]\n\
+                 Name=Conditional Launcher\n\
+                 Exec=\"{}\" --hidden\n\
+                 Type=Application\n\
+                 Terminal=false\n",
+                exe_path.display()
+            );
+            fs::write(path, content).ok();
+        }
+    }
+
+    fn remove_self_from_autostart(&self) {
+        if let Some(path) = Self::launcher_desktop_file_path() {
+            if path.exists() {
+                fs::remove_file(path).ok();
             }
         }
     }
