@@ -10,7 +10,7 @@ system boot based on conditions.
 - Launch app / if there is internet connection / there is partition mounted
 - Works on Windows/MacOS/Linux (KDE Wayland dev env)
 - Restart apps via cron or other systems alternatives
-- Portable, single binary + config file
+- Portable, single binary + config file. No tauri/electron/etc.
 - Dark theme using Dracula colors
 - Uses ready library/crates to have less custom code
 - Manage other autoruns in system, convert onto autorun and back (save "system"

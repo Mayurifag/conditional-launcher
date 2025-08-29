@@ -1,0 +1,12 @@
+{
+  "config": {
+    "MD013": {
+      "line_length": 222
+    }
+  },
+  "fix": true,
+  "globs": [
+    "**/*.{md,markdown}"
+  ],
+  "noBanner": true
+}
