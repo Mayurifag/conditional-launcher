@@ -252,7 +252,9 @@ impl eframe::App for ConditionalLauncherApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if ui.button("Revert").clicked() {
+                                            if ui.button("Revert")
+                                                .on_hover_text("Return this app to the system's regular autostart.")
+                                                .clicked() {
                                                 revert_app_index = Some(i);
                                             }
                                         },
@@ -270,7 +272,9 @@ impl eframe::App for ConditionalLauncherApp {
                                                 .get(&app.name)
                                                 .unwrap_or(&false);
                                             if !is_running {
-                                                if ui.button("Run").clicked() {
+                                                if ui.button("Run")
+                                                    .on_hover_text("Launch this application now.")
+                                                    .clicked() {
                                                     self.os_ops.launch_app(app);
                                                 }
                                             }
@@ -292,7 +296,8 @@ impl eframe::App for ConditionalLauncherApp {
                                 ui.separator();
 
                                 ui.horizontal(|ui| {
-                                    ui.checkbox(&mut app.conditions.internet, "Internet");
+                                    ui.checkbox(&mut app.conditions.internet, "Internet")
+                                        .on_hover_text("If checked, this app will only launch if there is an active internet connection.");
 
                                     // Check conditions for this app using the cached state.
                                     let status = check_app_conditions(
@@ -308,12 +313,14 @@ impl eframe::App for ConditionalLauncherApp {
                                         } else {
                                             ("Disconnected", egui::Color32::RED)
                                         };
-                                        ui.label(egui::RichText::new(text).color(color));
+                                        ui.label(egui::RichText::new(text).color(color))
+                                            .on_hover_text("Current internet connection status.");
                                     }
 
                                     ui.separator();
 
-                                    ui.label("Partition:");
+                                    ui.label("Partition:")
+                                        .on_hover_text("If a partition is selected, this app will only launch if that partition is mounted.");
                                     let selected_text = app
                                         .conditions
                                         .partition_mounted
@@ -348,7 +355,8 @@ impl eframe::App for ConditionalLauncherApp {
                                         } else {
                                             ("Not Mounted", egui::Color32::RED)
                                         };
-                                        ui.label(egui::RichText::new(text).color(color));
+                                        ui.label(egui::RichText::new(text).color(color))
+                                            .on_hover_text("Current status of the selected partition.");
                                     }
                                 });
                             });
@@ -396,7 +404,9 @@ impl eframe::App for ConditionalLauncherApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.button("Manage").clicked() {
+                                        if ui.button("Manage")
+                                            .on_hover_text("Move this app to be managed by Conditional Launcher.")
+                                            .clicked() {
                                             manage_app_index = Some(i);
                                         }
                                     },
@@ -414,7 +424,9 @@ impl eframe::App for ConditionalLauncherApp {
                                             .get(&app.name)
                                             .unwrap_or(&false);
                                         if !is_running {
-                                            if ui.button("Run").clicked() {
+                                            if ui.button("Run")
+                                                .on_hover_text("Launch this application now.")
+                                                .clicked() {
                                                 self.os_ops.launch_app(app);
                                             }
                                         }
