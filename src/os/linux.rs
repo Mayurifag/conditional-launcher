@@ -42,9 +42,7 @@ impl OsOperations for LinuxOperations {
             .map_or(false, |s| s.success())
     }
 
-    fn is_partition_mounted(&self, path: &str) -> bool {
-        // Use the `Disks` struct from `sysinfo` for a reliable check.
-        let disks = Disks::new_with_refreshed_list();
+    fn is_partition_mounted(&self, path: &str, disks: &Disks) -> bool {
         let mount_path = Path::new(path);
         disks.iter().any(|disk| disk.mount_point() == mount_path)
     }
@@ -115,7 +113,8 @@ impl OsOperations for LinuxOperations {
     }
 
     fn get_partitions(&self) -> Vec<PartitionInfo> {
-        let disks = Disks::new_with_refreshed_list();
+        let mut disks = Disks::new();
+        disks.refresh(true);
         let mut partitions = Vec::new();
         for disk in disks.iter() {
             let mount_point_str = disk.mount_point().to_string_lossy();

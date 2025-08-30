@@ -6,62 +6,47 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
-use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{Disks, ProcessRefreshKind, RefreshKind, System};
 
 pub struct ConditionStatus {
     pub internet_ok: bool,
     pub partition_ok: bool,
 }
 
-pub fn perform_launch_checks(
+/// Helper function to check app conditions, avoiding code duplication.
+fn check_app_conditions(
     os_ops: &dyn OsOperations,
-    managed_apps: &mut [AppConfig],
-) -> Vec<ConditionStatus> {
+    app: &AppConfig,
+    has_internet: bool,
+    disks: &Disks,
+) -> ConditionStatus {
+    let partition_ok = app
+        .conditions
+        .partition_mounted
+        .as_ref()
+        .map_or(true, |p| os_ops.is_partition_mounted(p, disks));
+    let internet_ok = !app.conditions.internet || has_internet;
+    ConditionStatus {
+        internet_ok,
+        partition_ok,
+    }
+}
+
+/// Checks conditions for all managed apps and launches them if met.
+/// This is optimized to check system-wide states (internet, disks) only once.
+pub fn perform_launch_checks(os_ops: &dyn OsOperations, managed_apps: &mut [AppConfig]) {
     let has_internet = os_ops.check_internet_connection();
-    let mut statuses = Vec::new();
+    let mut disks = Disks::new();
+    disks.refresh(true);
 
     for app in managed_apps.iter_mut() {
-        let partition_ok = app
-            .conditions
-            .partition_mounted
-            .as_ref()
-            .map_or(true, |p| os_ops.is_partition_mounted(p));
+        let status = check_app_conditions(os_ops, app, has_internet, &disks);
 
-        let internet_ok = !app.conditions.internet || has_internet;
-
-        statuses.push(ConditionStatus {
-            internet_ok,
-            partition_ok,
-        });
-
-        if !app.launched && internet_ok && partition_ok {
+        if !app.launched && status.internet_ok && status.partition_ok {
             os_ops.launch_app(app);
             app.launched = true;
         }
     }
-    statuses
-}
-
-pub fn get_condition_statuses(
-    os_ops: &dyn OsOperations,
-    managed_apps: &[AppConfig],
-) -> Vec<ConditionStatus> {
-    let has_internet = os_ops.check_internet_connection();
-    let mut statuses = Vec::new();
-
-    for app in managed_apps.iter() {
-        let partition_ok = app
-            .conditions
-            .partition_mounted
-            .as_ref()
-            .map_or(true, |p| os_ops.is_partition_mounted(p));
-        let internet_ok = !app.conditions.internet || has_internet;
-        statuses.push(ConditionStatus {
-            internet_ok,
-            partition_ok,
-        });
-    }
-    statuses
 }
 
 pub struct ConditionalLauncherApp {
@@ -72,6 +57,11 @@ pub struct ConditionalLauncherApp {
     texture_cache: HashMap<String, egui::TextureHandle>,
     last_autostart_check: Option<SystemTime>,
     sys: System,
+    // Caching fields
+    last_cache_update: SystemTime,
+    cached_internet_ok: bool,
+    cached_disks: Disks,
+    cached_running_status: HashMap<String, bool>,
 }
 
 fn load_icon<'a>(
@@ -163,6 +153,11 @@ impl ConditionalLauncherApp {
             texture_cache: HashMap::new(),
             last_autostart_check: None,
             sys: System::new_all(),
+            // Initialize caching fields. The cache will be populated on the first frame.
+            last_cache_update: SystemTime::UNIX_EPOCH,
+            cached_internet_ok: false,
+            cached_disks: Disks::new(),
+            cached_running_status: HashMap::new(),
         }
     }
 
@@ -175,21 +170,46 @@ impl eframe::App for ConditionalLauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
         ctx.request_repaint_after(std::time::Duration::from_secs(5));
-        self.sys.refresh_specifics(
-            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
-        );
 
-        let autostart_path = dirs::config_dir().unwrap().join("autostart");
-        if let Ok(metadata) = fs::metadata(&autostart_path) {
-            if let Ok(mod_time) = metadata.modified() {
-                if self.last_autostart_check.map_or(true, |t| t != mod_time) {
-                    self.refresh_autostart_list();
-                    self.last_autostart_check = Some(mod_time);
+        // Periodically update the system state cache every 5 seconds.
+        if self
+            .last_cache_update
+            .elapsed()
+            .unwrap_or_default()
+            .as_secs()
+            >= 5
+        {
+            // --- Start of expensive operations, now performed only every 5 seconds ---
+            self.cached_internet_ok = self.os_ops.check_internet_connection();
+            self.cached_disks.refresh(true);
+
+            // Refresh sysinfo process data. This is expensive.
+            self.sys.refresh_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+            );
+
+            // Update the autostart list if the directory has changed.
+            let autostart_path = dirs::config_dir().unwrap().join("autostart");
+            if let Ok(metadata) = fs::metadata(&autostart_path) {
+                if let Ok(mod_time) = metadata.modified() {
+                    if self.last_autostart_check.map_or(true, |t| t != mod_time) {
+                        self.refresh_autostart_list();
+                        self.last_autostart_check = Some(mod_time);
+                    }
                 }
             }
-        }
 
-        let condition_statuses = get_condition_statuses(self.os_ops.as_ref(), &self.managed_apps);
+            // Update the cache for running applications.
+            self.cached_running_status.clear();
+            for app in self.managed_apps.iter().chain(self.unmanaged_apps.iter()) {
+                let is_running = self.os_ops.is_app_running(app, &self.sys);
+                self.cached_running_status
+                    .insert(app.name.clone(), is_running);
+            }
+
+            self.last_cache_update = SystemTime::now();
+            // --- End of expensive operations ---
+        }
 
         let panel_frame = egui::Frame {
             inner_margin: egui::Margin::symmetric(10, 10),
@@ -199,7 +219,7 @@ impl eframe::App for ConditionalLauncherApp {
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show(ctx, |ui| {
-                let scroll_area_response = egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     if !self.managed_apps.is_empty() {
                         ui.add_space(10.0);
                         ui.heading("Managed by Launcher");
@@ -244,8 +264,11 @@ impl eframe::App for ConditionalLauncherApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            let is_running =
-                                                self.os_ops.is_app_running(app, &self.sys);
+                                            // Use the cached running status
+                                            let is_running = *self
+                                                .cached_running_status
+                                                .get(&app.name)
+                                                .unwrap_or(&false);
                                             if !is_running {
                                                 if ui.button("Run").clicked() {
                                                     self.os_ops.launch_app(app);
@@ -270,8 +293,17 @@ impl eframe::App for ConditionalLauncherApp {
 
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut app.conditions.internet, "Internet");
+
+                                    // Check conditions for this app using the cached state.
+                                    let status = check_app_conditions(
+                                        self.os_ops.as_ref(),
+                                        app,
+                                        self.cached_internet_ok,
+                                        &self.cached_disks,
+                                    );
+
                                     if app.conditions.internet {
-                                        let (text, color) = if condition_statuses[i].internet_ok {
+                                        let (text, color) = if status.internet_ok {
                                             ("Connected", egui::Color32::GREEN)
                                         } else {
                                             ("Disconnected", egui::Color32::RED)
@@ -296,11 +328,8 @@ impl eframe::App for ConditionalLauncherApp {
                                                 "None",
                                             );
                                             for p in self.available_partitions.iter() {
-                                                let display_label = if p.label.is_empty() {
-                                                    &p.mount_point
-                                                } else {
-                                                    &p.label
-                                                };
+                                                // Always use the mount point for the display text, as it's more user-friendly.
+                                                let display_label = &p.mount_point;
                                                 let details = if p.fs_type.is_empty() {
                                                     format!("({})", p.size)
                                                 } else {
@@ -314,7 +343,7 @@ impl eframe::App for ConditionalLauncherApp {
                                             }
                                         });
                                     if app.conditions.partition_mounted.is_some() {
-                                        let (text, color) = if condition_statuses[i].partition_ok {
+                                        let (text, color) = if status.partition_ok {
                                             ("Mounted", egui::Color32::GREEN)
                                         } else {
                                             ("Not Mounted", egui::Color32::RED)
@@ -379,7 +408,11 @@ impl eframe::App for ConditionalLauncherApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        let is_running = self.os_ops.is_app_running(app, &self.sys);
+                                        // Use the cached running status
+                                        let is_running = *self
+                                            .cached_running_status
+                                            .get(&app.name)
+                                            .unwrap_or(&false);
                                         if !is_running {
                                             if ui.button("Run").clicked() {
                                                 self.os_ops.launch_app(app);
@@ -398,15 +431,6 @@ impl eframe::App for ConditionalLauncherApp {
                         }
                     }
                 });
-
-                let required_height = scroll_area_response.content_size.y + 80.0;
-                let current_size = ctx.screen_rect().size();
-                if (required_height - current_size.y).abs() > 1.0 {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        current_size.x,
-                        required_height,
-                    )));
-                }
             });
     }
 }

@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use sysinfo::System;
+use sysinfo::{Disks, System};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -14,7 +14,7 @@ pub struct PartitionInfo {
 
 pub trait OsOperations {
     fn check_internet_connection(&self) -> bool;
-    fn is_partition_mounted(&self, path: &str) -> bool;
+    fn is_partition_mounted(&self, path: &str, disks: &Disks) -> bool;
     fn launch_app(&self, app: &AppConfig);
     fn get_autostart_apps(&self) -> Vec<AppConfig>;
     fn manage_app(&self, app: &AppConfig) -> bool;
@@ -38,7 +38,7 @@ pub fn get_os_operations() -> Box<dyn OsOperations> {
             fn check_internet_connection(&self) -> bool {
                 false
             }
-            fn is_partition_mounted(&self, _path: &str) -> bool {
+            fn is_partition_mounted(&self, _path: &str, _disks: &Disks) -> bool {
                 false
             }
             fn launch_app(&self, _app: &AppConfig) {}
