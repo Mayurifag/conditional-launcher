@@ -12,6 +12,7 @@ freedesktop-icons = "0.4.0"
 image = { version = "0.25.6", features = ["png", "jpeg"] }
 libc = "0.2.175"
 notify-rust = "4.11.7"
+reqwest = { version = "0.12.23", features = ["blocking"] }
 resvg = "0.45.1"
 serde = { version = "1.0.219", features = ["derive"] }
 sysinfo = "0.37.0"

@@ -48,7 +48,7 @@ pub struct AppConfig {
     pub is_managed: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Conditions {
     pub internet: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

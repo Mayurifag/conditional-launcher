@@ -90,6 +90,9 @@ pub struct ConditionalLauncherApp {
     cached_internet_ok: bool,
     cached_disks: Disks,
     cached_running_status: HashMap<String, bool>,
+    editing_app_name: Option<String>,
+    edit_buffer_command: String,
+    edit_buffer_working_dir: String,
 }
 
 pub fn load_all_apps(os_ops: &dyn OsOperations) -> Vec<AppConfig> {
@@ -154,56 +157,6 @@ fn load_icon<'a>(
     None
 }
 
-fn draw_app_ui(
-    ui: &mut egui::Ui,
-    app: &AppConfig,
-    texture_cache: &mut HashMap<String, egui::TextureHandle>,
-    ctx: &egui::Context,
-    cached_running_status: &HashMap<String, bool>,
-    os_ops: &dyn OsOperations,
-) {
-    ui.horizontal(|ui| {
-        let mut icon_shown = false;
-        if let Some(icon_name) = &app.icon {
-            if let Some(texture) = load_icon(texture_cache, ctx, icon_name) {
-                ui.add(egui::Image::new(texture).max_size(egui::vec2(20.0, 20.0)));
-                icon_shown = true;
-            }
-        }
-        if !icon_shown {
-            let fallback = app.name.chars().next().unwrap_or('?');
-            ui.add_sized([20.0, 20.0], egui::Label::new(fallback.to_string()));
-        }
-        ui.label(egui::RichText::new(&app.name).strong());
-    });
-
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(&app.command).small().monospace());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let is_running = *cached_running_status.get(&app.name).unwrap_or(&false);
-            if !is_running {
-                if ui
-                    .button("Run")
-                    .on_hover_text("Launch this application now.")
-                    .clicked()
-                {
-                    os_ops.launch_app(app);
-                }
-            }
-        });
-    });
-
-    if let Some(wd) = &app.working_dir {
-        if !wd.as_os_str().is_empty() {
-            ui.label(
-                egui::RichText::new(format!("Working Dir: {}", wd.display()))
-                    .small()
-                    .monospace(),
-            );
-        }
-    }
-}
-
 fn draw_condition_controls(
     ui: &mut egui::Ui,
     app: &mut AppConfig,
@@ -211,19 +164,12 @@ fn draw_condition_controls(
     os_ops: &dyn OsOperations,
     cached_internet_ok: bool,
     cached_disks: &Disks,
-) -> bool {
-    let mut changed = false;
-
+) {
     ui.horizontal(|ui| {
-        if ui
-            .checkbox(&mut app.conditions.internet, "Internet")
+        ui.checkbox(&mut app.conditions.internet, "Internet")
             .on_hover_text(
                 "If checked, this app will only launch if there is an active internet connection.",
-            )
-            .changed()
-        {
-            changed = true;
-        }
+            );
 
         let status = check_app_conditions(os_ops, app, cached_internet_ok, cached_disks);
 
@@ -244,7 +190,7 @@ fn draw_condition_controls(
             .as_deref()
             .unwrap_or("None");
 
-        let combo_response = egui::ComboBox::from_id_salt(&app.name)
+        egui::ComboBox::from_id_salt(&app.name)
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut app.conditions.partition_mounted, None, "None");
@@ -263,18 +209,12 @@ fn draw_condition_controls(
                 }
             });
 
-        if combo_response.response.changed() {
-            changed = true;
-        }
-
         if app.conditions.partition_mounted.is_some() {
             let text = if status.partition_ok { "✅" } else { "❌" };
             ui.label(text)
                 .on_hover_text("Current status of the selected partition.");
         }
     });
-
-    changed
 }
 
 impl ConditionalLauncherApp {
@@ -295,19 +235,18 @@ impl ConditionalLauncherApp {
     fn save_config(&mut self) {
         let managed_apps: Vec<_> = self.apps.iter().filter(|a| a.is_managed).cloned().collect();
 
-        let config = Config {
-            apps: managed_apps.clone(),
-        };
+        let config = Config { apps: managed_apps };
         if let Some(parent) = Self::config_path().parent() {
             fs::create_dir_all(parent).ok();
         }
         let toml = toml::to_string_pretty(&config).unwrap();
         fs::write(Self::config_path(), toml).ok();
 
-        if config.apps.is_empty() {
+        let managed_app_count = config.apps.len();
+        if managed_app_count == 0 {
             self.os_ops.remove_self_from_autostart();
         } else {
-            self.os_ops.add_self_to_autostart(managed_apps.len());
+            self.os_ops.add_self_to_autostart(managed_app_count);
         }
     }
 
@@ -326,6 +265,9 @@ impl ConditionalLauncherApp {
             cached_internet_ok: false,
             cached_disks: Disks::new(),
             cached_running_status: HashMap::new(),
+            editing_app_name: None,
+            edit_buffer_command: String::new(),
+            edit_buffer_working_dir: String::new(),
         }
     }
 
@@ -407,16 +349,120 @@ impl eframe::App for ConditionalLauncherApp {
                             ui.add_space(8.0);
                         }
                         egui::Frame::group(ui.style()).show(ui, |ui| {
-                            draw_app_ui(
-                                ui,
-                                app,
-                                &mut self.texture_cache,
-                                ctx,
-                                &self.cached_running_status,
-                                self.os_ops.as_ref(),
-                            );
+                            ui.horizontal(|ui| {
+                                let mut icon_shown = false;
+                                if let Some(icon_name) = &app.icon {
+                                    if let Some(texture) =
+                                        load_icon(&mut self.texture_cache, ctx, icon_name)
+                                    {
+                                        ui.add(
+                                            egui::Image::new(texture)
+                                                .max_size(egui::vec2(20.0, 20.0)),
+                                        );
+                                        icon_shown = true;
+                                    }
+                                }
+                                if !icon_shown {
+                                    let fallback = app.name.chars().next().unwrap_or('?');
+                                    ui.add_sized(
+                                        [20.0, 20.0],
+                                        egui::Label::new(fallback.to_string()),
+                                    );
+                                }
+                                ui.label(egui::RichText::new(&app.name).strong());
+                            });
+
+                            let is_editing = self.editing_app_name.as_deref() == Some(&app.name);
+
+                            if is_editing {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Command:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.edit_buffer_command,
+                                            )
+                                            .desired_width(f32::INFINITY),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Working Dir:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.edit_buffer_working_dir,
+                                            )
+                                            .desired_width(f32::INFINITY),
+                                        );
+                                    });
+                                });
+
+                                ui.horizontal(|ui| {
+                                    if ui.button("Save").clicked() {
+                                        app.command = self.edit_buffer_command.clone();
+                                        let path_str = self.edit_buffer_working_dir.clone();
+                                        app.working_dir = if path_str.is_empty() {
+                                            None
+                                        } else {
+                                            Some(PathBuf::from(path_str))
+                                        };
+                                        self.editing_app_name = None;
+                                        needs_save = true;
+                                    }
+                                    if ui.button("Cancel").clicked() {
+                                        self.editing_app_name = None;
+                                    }
+                                });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(&app.command).small().monospace());
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            let is_running = *self
+                                                .cached_running_status
+                                                .get(&app.name)
+                                                .unwrap_or(&false);
+                                            if !is_running {
+                                                if ui
+                                                    .button("Run")
+                                                    .on_hover_text("Launch this application now.")
+                                                    .clicked()
+                                                {
+                                                    self.os_ops.launch_app(app);
+                                                }
+                                            }
+                                            if app.is_managed {
+                                                if ui.button("Edit").clicked() {
+                                                    self.editing_app_name = Some(app.name.clone());
+                                                    self.edit_buffer_command = app.command.clone();
+                                                    self.edit_buffer_working_dir = app
+                                                        .working_dir
+                                                        .as_ref()
+                                                        .map(|p| p.to_string_lossy().to_string())
+                                                        .unwrap_or_default();
+                                                }
+                                            }
+                                        },
+                                    );
+                                });
+
+                                if let Some(wd) = &app.working_dir {
+                                    if !wd.as_os_str().is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "Working Dir: {}",
+                                                wd.display()
+                                            ))
+                                            .small()
+                                            .monospace(),
+                                        );
+                                    }
+                                }
+                            }
+
                             ui.separator();
-                            let conditions_changed = draw_condition_controls(
+                            let old_conditions = app.conditions.clone();
+                            draw_condition_controls(
                                 ui,
                                 app,
                                 &self.available_partitions,
@@ -424,19 +470,20 @@ impl eframe::App for ConditionalLauncherApp {
                                 self.cached_internet_ok,
                                 &self.cached_disks,
                             );
+                            let conditions_changed = app.conditions != old_conditions;
 
                             if conditions_changed {
-                                let is_becoming_managed = app.conditions.internet
+                                let should_be_managed = app.conditions.internet
                                     || app.conditions.partition_mounted.is_some();
-                                let is_becoming_unmanaged = !app.conditions.internet
-                                    && app.conditions.partition_mounted.is_none();
 
-                                if !app.is_managed && is_becoming_managed {
+                                if app.is_managed {
+                                    if should_be_managed {
+                                        needs_save = true;
+                                    } else {
+                                        app_to_unmanage = Some(i);
+                                    }
+                                } else if should_be_managed {
                                     app_to_manage = Some(i);
-                                } else if app.is_managed && is_becoming_unmanaged {
-                                    app_to_unmanage = Some(i);
-                                } else if app.is_managed {
-                                    needs_save = true;
                                 }
                             }
                         });
@@ -446,8 +493,6 @@ impl eframe::App for ConditionalLauncherApp {
                         if self.os_ops.manage_app(&self.apps[i]) {
                             self.apps[i].is_managed = true;
                             needs_save = true;
-                        } else {
-                            self.apps[i].conditions = Default::default();
                         }
                     }
 

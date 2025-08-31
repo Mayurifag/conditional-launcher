@@ -2,13 +2,12 @@ use super::{OsOperations, PartitionInfo};
 use crate::config::AppConfig;
 use freedesktop_desktop_entry::DesktopEntry;
 use notify_rust::Notification;
+use reqwest;
 use std::env;
 use std::fs;
-use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 use sysinfo::{Disks, System};
 
 pub struct LinuxOperations;
@@ -38,7 +37,10 @@ impl LinuxOperations {
 
 impl OsOperations for LinuxOperations {
     fn check_internet_connection(&self) -> bool {
-        TcpStream::connect_timeout(&"8.8.8.8:53".parse().unwrap(), Duration::from_secs(3)).is_ok()
+        match reqwest::blocking::get("http://connectivitycheck.gstatic.com/generate_204") {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
     }
 
     fn is_partition_mounted(&self, path: &str, disks: &Disks) -> bool {
