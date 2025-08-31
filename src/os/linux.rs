@@ -54,10 +54,6 @@ impl OsOperations for LinuxOperations {
             cmd.current_dir(dir);
         }
 
-        // Detach the process by creating a new session.
-        // This is necessary to prevent the child process from being killed when the launcher exits.
-        // `pre_exec` is unsafe because it runs in the child process right before exec.
-        // Any allocation or lock usage can cause deadlocks. `setsid` is a safe syscall to use here.
         unsafe {
             cmd.pre_exec(|| {
                 if libc::setsid() == -1 {
@@ -135,28 +131,17 @@ impl OsOperations for LinuxOperations {
             }
 
             let mount_point = mount_point_str.to_string();
-            let label = disk.name().to_string_lossy().to_string();
             let size_bytes = disk.total_space();
             let size = format!("{:.1} GB", size_bytes as f64 / 1_000_000_000.0);
             let fs_type = fs_type_str.to_string();
 
             partitions.push(PartitionInfo {
                 mount_point,
-                label,
                 fs_type,
                 size,
             });
         }
         partitions
-    }
-
-    fn open_config_dir(&self) {
-        if let Some(config_dir) = dirs::config_dir() {
-            let path = config_dir.join("conditional-launcher");
-            if fs::create_dir_all(&path).is_ok() {
-                let _ = Command::new("xdg-open").arg(path).spawn();
-            }
-        }
     }
 
     fn add_self_to_autostart(&self) {

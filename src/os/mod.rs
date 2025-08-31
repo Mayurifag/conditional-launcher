@@ -7,7 +7,6 @@ pub mod linux;
 #[derive(Clone, Debug, Default)]
 pub struct PartitionInfo {
     pub mount_point: String,
-    pub label: String,
     pub fs_type: String,
     pub size: String,
 }
@@ -20,7 +19,6 @@ pub trait OsOperations {
     fn manage_app(&self, app: &AppConfig) -> bool;
     fn unmanage_app(&self, app: &AppConfig) -> bool;
     fn get_partitions(&self) -> Vec<PartitionInfo>;
-    fn open_config_dir(&self);
     fn add_self_to_autostart(&self);
     fn remove_self_from_autostart(&self);
     fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool;
@@ -54,7 +52,6 @@ pub fn get_os_operations() -> Box<dyn OsOperations> {
             fn get_partitions(&self) -> Vec<PartitionInfo> {
                 vec![]
             }
-            fn open_config_dir(&self) {}
             fn add_self_to_autostart(&self) {}
             fn remove_self_from_autostart(&self) {}
             fn is_app_running(&self, _app: &AppConfig, _sys: &System) -> bool {

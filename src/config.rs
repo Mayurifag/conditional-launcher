@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// Helper module for serializing PathBuf to prevent TOML errors.
 mod path_serde {
     use serde::{Deserializer, Serializer};
     use std::path::PathBuf;

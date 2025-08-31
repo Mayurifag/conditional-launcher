@@ -13,7 +13,6 @@ pub struct ConditionStatus {
     pub partition_ok: bool,
 }
 
-/// Helper function to check app conditions, avoiding code duplication.
 fn check_app_conditions(
     os_ops: &dyn OsOperations,
     app: &AppConfig,
@@ -32,8 +31,6 @@ fn check_app_conditions(
     }
 }
 
-/// Checks conditions for all managed apps and launches them if met.
-/// This is optimized to check system-wide states (internet, disks) only once.
 pub fn perform_launch_checks(os_ops: &dyn OsOperations, managed_apps: &mut [AppConfig]) {
     let has_internet = os_ops.check_internet_connection();
     let mut disks = Disks::new();
