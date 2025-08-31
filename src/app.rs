@@ -37,9 +37,13 @@ pub fn perform_launch_checks(os_ops: &dyn OsOperations, managed_apps: &mut [AppC
     disks.refresh(true);
 
     for app in managed_apps.iter_mut() {
+        if app.launched {
+            continue;
+        }
+
         let status = check_app_conditions(os_ops, app, has_internet, &disks);
 
-        if !app.launched && status.internet_ok && status.partition_ok {
+        if status.internet_ok && status.partition_ok {
             os_ops.launch_app(app);
             app.launched = true;
         }
@@ -240,6 +244,7 @@ impl eframe::App for ConditionalLauncherApp {
             .frame(panel_frame)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    let mut needs_save = false;
                     if !self.managed_apps.is_empty() {
                         ui.add_space(10.0);
                         ui.heading("Managed by Launcher");
@@ -310,13 +315,16 @@ impl eframe::App for ConditionalLauncherApp {
                                         .small()
                                         .monospace(),
                                     );
-                                }
+                                 }
 
                                 ui.separator();
 
                                 ui.horizontal(|ui| {
-                                    ui.checkbox(&mut app.conditions.internet, "Internet")
-                                        .on_hover_text("If checked, this app will only launch if there is an active internet connection.");
+                                    if ui.checkbox(&mut app.conditions.internet, "Internet")
+                                        .on_hover_text("If checked, this app will only launch if there is an active internet connection.")
+                                        .changed() {
+                                        needs_save = true;
+                                    }
 
                                     let status = check_app_conditions(
                                         self.os_ops.as_ref(),
@@ -344,7 +352,8 @@ impl eframe::App for ConditionalLauncherApp {
                                         .partition_mounted
                                         .as_deref()
                                         .unwrap_or("None");
-                                    egui::ComboBox::from_id_salt(&app.name)
+
+                                    let combo_response = egui::ComboBox::from_id_salt(&app.name)
                                         .selected_text(selected_text)
                                         .show_ui(ui, |ui| {
                                             ui.selectable_value(
@@ -366,6 +375,11 @@ impl eframe::App for ConditionalLauncherApp {
                                                 );
                                             }
                                         });
+
+                                    if combo_response.response.changed() {
+                                        needs_save = true;
+                                    }
+
                                     if app.conditions.partition_mounted.is_some() {
                                         let (text, color) = if status.partition_ok {
                                             ("Mounted", egui::Color32::GREEN)
@@ -384,6 +398,10 @@ impl eframe::App for ConditionalLauncherApp {
                                 self.save_config();
                             }
                         }
+                    }
+
+                    if needs_save {
+                        self.save_config();
                     }
 
                     ui.add_space(10.0);

@@ -4,9 +4,11 @@ use freedesktop_desktop_entry::DesktopEntry;
 use notify_rust::Notification;
 use std::env;
 use std::fs;
+use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 use sysinfo::{Disks, System};
 
 pub struct LinuxOperations;
@@ -35,12 +37,7 @@ impl LinuxOperations {
 
 impl OsOperations for LinuxOperations {
     fn check_internet_connection(&self) -> bool {
-        Command::new("ping")
-            .args(["-c", "1", "8.8.8.8"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_or(false, |s| s.success())
+        TcpStream::connect_timeout(&"8.8.8.8:53".parse().unwrap(), Duration::from_secs(3)).is_ok()
     }
 
     fn is_partition_mounted(&self, path: &str, disks: &Disks) -> bool {
