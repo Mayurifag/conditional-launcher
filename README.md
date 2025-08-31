@@ -25,6 +25,8 @@ Why would I need them if conditions aren't met yet? They waste resources!
 - Automatically adds to your user autostarts and removes if not needed. Auto-
   closes when it done its job.
 
+![Screenshot](Screenshot.webp)
+
 ## Installation
 
 To download and install the latest release for x86_64 Linux, run the following
@@ -36,9 +38,9 @@ curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/downlo
 
 ## Roadmap
 
-- Release 0.1 via make command adding tag and CI
 - Migrate from `egui` to [something using *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode). Use Dracula colors
 - Add macos functionality
 - Add custom commands functionality. Add possibility to cron them.
 - Is it possible to contain all needed info in autostart shortcut across all
   systems?
+- Release cargo and think about simpler installation (brew/aur?)
