@@ -26,7 +26,6 @@ mod path_serde {
     }
 }
 
-// A new root struct to wrap the list of apps. This is the fix for the TOML crash.
 #[derive(Serialize, Deserialize, Default)]
 pub struct Config {
     pub apps: Vec<AppConfig>,
@@ -45,6 +44,8 @@ pub struct AppConfig {
     pub working_dir: Option<PathBuf>,
     #[serde(skip)]
     pub launched: bool,
+    #[serde(skip)]
+    pub is_managed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

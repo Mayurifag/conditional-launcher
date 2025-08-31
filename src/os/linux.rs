@@ -27,6 +27,7 @@ impl LinuxOperations {
             original_path: Some(path),
             conditions: Default::default(),
             launched: false,
+            is_managed: false,
         })
     }
 
@@ -142,18 +143,20 @@ impl OsOperations for LinuxOperations {
         partitions
     }
 
-    fn add_self_to_autostart(&self) {
+    fn add_self_to_autostart(&self, managed_app_count: usize) {
         if let (Some(path), Ok(exe_path)) = (Self::launcher_desktop_file_path(), env::current_exe())
         {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).ok();
             }
+            let name = format!("Conditional launch {} apps", managed_app_count);
             let content = format!(
                 "[Desktop Entry]\n\
-                 Name=Conditional Launcher\n\
+                 Name={}\n\
                  Exec=\"{}\" --hidden\n\
                  Type=Application\n\
                  Terminal=false\n",
+                name,
                 exe_path.display()
             );
             fs::write(path, content).ok();

@@ -80,14 +80,12 @@ pub fn run_hidden_process() {
     os_ops.send_exit_notification(&launched_app_names);
 }
 pub struct ConditionalLauncherApp {
-    managed_apps: Vec<AppConfig>,
-    unmanaged_apps: Vec<AppConfig>,
+    apps: Vec<AppConfig>,
     os_ops: Box<dyn OsOperations>,
     available_partitions: Vec<PartitionInfo>,
     texture_cache: HashMap<String, egui::TextureHandle>,
     last_autostart_check: Option<SystemTime>,
     sys: System,
-    // Caching fields
     last_cache_update: SystemTime,
     cached_internet_ok: bool,
     cached_disks: Disks,
@@ -137,6 +135,137 @@ fn load_icon<'a>(
     None
 }
 
+fn draw_app_ui(
+    ui: &mut egui::Ui,
+    app: &AppConfig,
+    texture_cache: &mut HashMap<String, egui::TextureHandle>,
+    ctx: &egui::Context,
+    cached_running_status: &HashMap<String, bool>,
+    os_ops: &dyn OsOperations,
+) {
+    ui.horizontal(|ui| {
+        let mut icon_shown = false;
+        if let Some(icon_name) = &app.icon {
+            if let Some(texture) = load_icon(texture_cache, ctx, icon_name) {
+                ui.add(egui::Image::new(texture).max_size(egui::vec2(20.0, 20.0)));
+                icon_shown = true;
+            }
+        }
+        if !icon_shown {
+            let fallback = app.name.chars().next().unwrap_or('?');
+            ui.add_sized([20.0, 20.0], egui::Label::new(fallback.to_string()));
+        }
+        ui.label(egui::RichText::new(&app.name).strong());
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(&app.command).small().monospace());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let is_running = *cached_running_status.get(&app.name).unwrap_or(&false);
+            if !is_running {
+                if ui
+                    .button("Run")
+                    .on_hover_text("Launch this application now.")
+                    .clicked()
+                {
+                    os_ops.launch_app(app);
+                }
+            }
+        });
+    });
+
+    if let Some(wd) = &app.working_dir {
+        if !wd.as_os_str().is_empty() {
+            ui.label(
+                egui::RichText::new(format!("Working Dir: {}", wd.display()))
+                    .small()
+                    .monospace(),
+            );
+        }
+    }
+}
+
+fn draw_condition_controls(
+    ui: &mut egui::Ui,
+    app: &mut AppConfig,
+    available_partitions: &[PartitionInfo],
+    os_ops: &dyn OsOperations,
+    cached_internet_ok: bool,
+    cached_disks: &Disks,
+) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        if ui
+            .checkbox(&mut app.conditions.internet, "Internet")
+            .on_hover_text(
+                "If checked, this app will only launch if there is an active internet connection.",
+            )
+            .changed()
+        {
+            changed = true;
+        }
+
+        let status = check_app_conditions(os_ops, app, cached_internet_ok, cached_disks);
+
+        if app.conditions.internet {
+            let (text, color) = if status.internet_ok {
+                ("Connected", egui::Color32::GREEN)
+            } else {
+                ("Disconnected", egui::Color32::RED)
+            };
+            ui.label(egui::RichText::new(text).color(color))
+                .on_hover_text("Current internet connection status.");
+        }
+
+        ui.separator();
+
+        ui.label("Partition:").on_hover_text(
+            "If a partition is selected, this app will only launch if that partition is mounted.",
+        );
+        let selected_text = app
+            .conditions
+            .partition_mounted
+            .as_deref()
+            .unwrap_or("None");
+
+        let combo_response = egui::ComboBox::from_id_salt(&app.name)
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.conditions.partition_mounted, None, "None");
+                for p in available_partitions.iter() {
+                    let display_label = &p.mount_point;
+                    let details = if p.fs_type.is_empty() {
+                        format!("({})", p.size)
+                    } else {
+                        format!("({}, {})", p.fs_type, p.size)
+                    };
+                    ui.selectable_value(
+                        &mut app.conditions.partition_mounted,
+                        Some(p.mount_point.clone()),
+                        format!("{} {}", display_label, details),
+                    );
+                }
+            });
+
+        if combo_response.response.changed() {
+            changed = true;
+        }
+
+        if app.conditions.partition_mounted.is_some() {
+            let (text, color) = if status.partition_ok {
+                ("Mounted", egui::Color32::GREEN)
+            } else {
+                ("Not Mounted", egui::Color32::RED)
+            };
+            ui.label(egui::RichText::new(text).color(color))
+                .on_hover_text("Current status of the selected partition.");
+        }
+    });
+
+    changed
+}
+
 impl ConditionalLauncherApp {
     fn config_path() -> PathBuf {
         dirs::config_dir()
@@ -153,8 +282,10 @@ impl ConditionalLauncherApp {
     }
 
     fn save_config(&mut self) {
+        let managed_apps: Vec<_> = self.apps.iter().filter(|a| a.is_managed).cloned().collect();
+
         let config = Config {
-            apps: self.managed_apps.clone(),
+            apps: managed_apps.clone(),
         };
         if let Some(parent) = Self::config_path().parent() {
             fs::create_dir_all(parent).ok();
@@ -162,28 +293,40 @@ impl ConditionalLauncherApp {
         let toml = toml::to_string_pretty(&config).unwrap();
         fs::write(Self::config_path(), toml).ok();
 
-        if self.managed_apps.is_empty() {
+        if config.apps.is_empty() {
             self.os_ops.remove_self_from_autostart();
         } else {
-            self.os_ops.add_self_to_autostart();
+            self.os_ops.add_self_to_autostart(managed_apps.len());
         }
     }
 
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let os_ops = crate::os::get_os_operations();
-        let managed_apps = Self::load_config();
-        let unmanaged_apps = os_ops.get_autostart_apps();
         let available_partitions = os_ops.get_partitions();
 
+        let mut managed_apps = Self::load_config();
+        for app in &mut managed_apps {
+            app.is_managed = true;
+        }
+
+        let unmanaged_apps = os_ops.get_autostart_apps();
+
+        let mut apps = managed_apps;
+        for unmanaged_app in unmanaged_apps {
+            if !apps.iter().any(|a| a.name == unmanaged_app.name) {
+                apps.push(unmanaged_app);
+            }
+        }
+
+        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
         Self {
-            managed_apps,
-            unmanaged_apps,
+            apps,
             os_ops,
             available_partitions,
             texture_cache: HashMap::new(),
             last_autostart_check: None,
             sys: System::new_all(),
-            // Initialize caching fields. The cache will be populated on the first frame.
             last_cache_update: SystemTime::UNIX_EPOCH,
             cached_internet_ok: false,
             cached_disks: Disks::new(),
@@ -192,7 +335,19 @@ impl ConditionalLauncherApp {
     }
 
     fn refresh_autostart_list(&mut self) {
-        self.unmanaged_apps = self.os_ops.get_autostart_apps();
+        let fresh_unmanaged = self.os_ops.get_autostart_apps();
+
+        self.apps
+            .retain(|app| app.is_managed || fresh_unmanaged.iter().any(|u| u.name == app.name));
+
+        for app in fresh_unmanaged {
+            if !self.apps.iter().any(|a| a.name == app.name) {
+                self.apps.push(app);
+            }
+        }
+
+        self.apps
+            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     }
 }
 
@@ -226,7 +381,7 @@ impl eframe::App for ConditionalLauncherApp {
             }
 
             self.cached_running_status.clear();
-            for app in self.managed_apps.iter().chain(self.unmanaged_apps.iter()) {
+            for app in self.apps.iter() {
                 let is_running = self.os_ops.is_app_running(app, &self.sys);
                 self.cached_running_status
                     .insert(app.name.clone(), is_running);
@@ -245,265 +400,70 @@ impl eframe::App for ConditionalLauncherApp {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut needs_save = false;
-                    if !self.managed_apps.is_empty() {
-                        ui.add_space(10.0);
-                        ui.heading("Managed by Launcher");
-                        ui.add_space(5.0);
+                    let mut app_to_manage = None;
+                    let mut app_to_unmanage = None;
 
-                        let mut revert_app_index: Option<usize> = None;
-                        for (i, app) in self.managed_apps.iter_mut().enumerate() {
-                            ui.group(|ui| {
-                                ui.horizontal(|ui| {
-                                    let mut icon_shown = false;
-                                    if let Some(icon_name) = &app.icon {
-                                        if let Some(texture) =
-                                            load_icon(&mut self.texture_cache, ctx, icon_name)
-                                        {
-                                            ui.add(
-                                                egui::Image::new(texture)
-                                                    .max_size(egui::vec2(20.0, 20.0)),
-                                            );
-                                            icon_shown = true;
-                                        }
-                                    }
-                                    if !icon_shown {
-                                        let fallback = app.name.chars().next().unwrap_or('?');
-                                        ui.add_sized(
-                                            [20.0, 20.0],
-                                            egui::Label::new(fallback.to_string()),
-                                        );
-                                    }
-                                    ui.label(egui::RichText::new(&app.name).strong());
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui.button("Revert")
-                                                .on_hover_text("Return this app to the system's regular autostart.")
-                                                .clicked() {
-                                                revert_app_index = Some(i);
-                                            }
-                                        },
-                                    );
-                                });
+                    if self.apps.is_empty() {
+                        ui.label("No autostart applications found.");
+                    }
 
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(&app.command).small().monospace());
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            let is_running = *self
-                                                .cached_running_status
-                                                .get(&app.name)
-                                                .unwrap_or(&false);
-                                            if !is_running {
-                                                if ui.button("Run")
-                                                    .on_hover_text("Launch this application now.")
-                                                    .clicked() {
-                                                    self.os_ops.launch_app(app);
-                                                }
-                                            }
-                                        },
-                                    );
-                                });
+                    for (i, app) in self.apps.iter_mut().enumerate() {
+                        ui.group(|ui| {
+                            draw_app_ui(
+                                ui,
+                                app,
+                                &mut self.texture_cache,
+                                ctx,
+                                &self.cached_running_status,
+                                self.os_ops.as_ref(),
+                            );
+                            ui.separator();
+                            let conditions_changed = draw_condition_controls(
+                                ui,
+                                app,
+                                &self.available_partitions,
+                                self.os_ops.as_ref(),
+                                self.cached_internet_ok,
+                                &self.cached_disks,
+                            );
 
-                                if let Some(wd) = &app.working_dir {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "Working Dir: {}",
-                                            wd.display()
-                                        ))
-                                        .small()
-                                        .monospace(),
-                                    );
-                                 }
+                            if conditions_changed {
+                                let is_becoming_managed = app.conditions.internet
+                                    || app.conditions.partition_mounted.is_some();
+                                let is_becoming_unmanaged = !app.conditions.internet
+                                    && app.conditions.partition_mounted.is_none();
 
-                                ui.separator();
-
-                                ui.horizontal(|ui| {
-                                    if ui.checkbox(&mut app.conditions.internet, "Internet")
-                                        .on_hover_text("If checked, this app will only launch if there is an active internet connection.")
-                                        .changed() {
-                                        needs_save = true;
-                                    }
-
-                                    let status = check_app_conditions(
-                                        self.os_ops.as_ref(),
-                                        app,
-                                        self.cached_internet_ok,
-                                        &self.cached_disks,
-                                    );
-
-                                    if app.conditions.internet {
-                                        let (text, color) = if status.internet_ok {
-                                            ("Connected", egui::Color32::GREEN)
-                                        } else {
-                                            ("Disconnected", egui::Color32::RED)
-                                        };
-                                        ui.label(egui::RichText::new(text).color(color))
-                                            .on_hover_text("Current internet connection status.");
-                                    }
-
-                                    ui.separator();
-
-                                    ui.label("Partition:")
-                                        .on_hover_text("If a partition is selected, this app will only launch if that partition is mounted.");
-                                    let selected_text = app
-                                        .conditions
-                                        .partition_mounted
-                                        .as_deref()
-                                        .unwrap_or("None");
-
-                                    let combo_response = egui::ComboBox::from_id_salt(&app.name)
-                                        .selected_text(selected_text)
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut app.conditions.partition_mounted,
-                                                None,
-                                                "None",
-                                            );
-                                            for p in self.available_partitions.iter() {
-                                                let display_label = &p.mount_point;
-                                                let details = if p.fs_type.is_empty() {
-                                                    format!("({})", p.size)
-                                                } else {
-                                                    format!("({}, {})", p.fs_type, p.size)
-                                                };
-                                                ui.selectable_value(
-                                                    &mut app.conditions.partition_mounted,
-                                                    Some(p.mount_point.clone()),
-                                                    format!("{} {}", display_label, details),
-                                                );
-                                            }
-                                        });
-
-                                    if combo_response.response.changed() {
-                                        needs_save = true;
-                                    }
-
-                                    if app.conditions.partition_mounted.is_some() {
-                                        let (text, color) = if status.partition_ok {
-                                            ("Mounted", egui::Color32::GREEN)
-                                        } else {
-                                            ("Not Mounted", egui::Color32::RED)
-                                        };
-                                        ui.label(egui::RichText::new(text).color(color))
-                                            .on_hover_text("Current status of the selected partition.");
-                                    }
-                                });
-                            });
-                        }
-                        if let Some(index) = revert_app_index {
-                            if self.os_ops.unmanage_app(&self.managed_apps[index]) {
-                                self.unmanaged_apps.push(self.managed_apps.remove(index));
-                                self.save_config();
+                                if !app.is_managed && is_becoming_managed {
+                                    app_to_manage = Some(i);
+                                } else if app.is_managed && is_becoming_unmanaged {
+                                    app_to_unmanage = Some(i);
+                                } else if app.is_managed {
+                                    needs_save = true;
+                                }
                             }
+                        });
+                    }
+
+                    if let Some(i) = app_to_manage {
+                        if self.os_ops.manage_app(&self.apps[i]) {
+                            self.apps[i].is_managed = true;
+                            needs_save = true;
+                        } else {
+                            self.apps[i].conditions = Default::default();
+                        }
+                    }
+
+                    if let Some(i) = app_to_unmanage {
+                        if self.os_ops.unmanage_app(&self.apps[i]) {
+                            self.apps[i].is_managed = false;
+                            needs_save = true;
                         }
                     }
 
                     if needs_save {
                         self.save_config();
                     }
-
-                    ui.add_space(10.0);
-                    ui.heading("User autostart entries");
-                    ui.add_space(5.0);
-
-                    if self.unmanaged_apps.is_empty() {
-                        ui.label("No unmanaged user autostart apps found.");
-                    }
-
-                    let mut manage_app_index: Option<usize> = None;
-                    for (i, app) in self.unmanaged_apps.iter().enumerate() {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                let mut icon_shown = false;
-                                if let Some(icon_name) = &app.icon {
-                                    if let Some(texture) =
-                                        load_icon(&mut self.texture_cache, ctx, icon_name)
-                                    {
-                                        ui.add(
-                                            egui::Image::new(texture)
-                                                .max_size(egui::vec2(20.0, 20.0)),
-                                        );
-                                        icon_shown = true;
-                                    }
-                                }
-                                if !icon_shown {
-                                    let fallback = app.name.chars().next().unwrap_or('?');
-                                    ui.add_sized(
-                                        [20.0, 20.0],
-                                        egui::Label::new(fallback.to_string()),
-                                    );
-                                }
-                                ui.label(egui::RichText::new(&app.name).strong());
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.button("Manage")
-                                            .on_hover_text("Move this app to be managed by Conditional Launcher.")
-                                            .clicked() {
-                                            manage_app_index = Some(i);
-                                        }
-                                    },
-                                );
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&app.command).small().monospace());
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        let is_running = *self
-                                            .cached_running_status
-                                            .get(&app.name)
-                                            .unwrap_or(&false);
-                                        if !is_running {
-                                            if ui.button("Run")
-                                                .on_hover_text("Launch this application now.")
-                                                .clicked() {
-                                                self.os_ops.launch_app(app);
-                                            }
-                                        }
-                                    },
-                                );
-                            });
-                        });
-                    }
-
-                    if let Some(index) = manage_app_index {
-                        if self.os_ops.manage_app(&self.unmanaged_apps[index]) {
-                            self.managed_apps.push(self.unmanaged_apps.remove(index));
-                            self.save_config();
-                        }
-                    }
                 });
-                ui.separator();
-                ui.heading("Debug");
-
-                let all_managed_apps_running = self.managed_apps.iter().all(|app| {
-                    *self
-                        .cached_running_status
-                        .get(&app.name)
-                        .unwrap_or(&false)
-                });
-
-                if !self.managed_apps.is_empty() {
-                    if !all_managed_apps_running {
-                        if ui
-                            .button("Run Hidden Check")
-                            .on_hover_text(
-                                "Simulate the background process that runs on startup with --hidden.",
-                            )
-                            .clicked()
-                        {
-                            std::thread::spawn(run_hidden_process);
-                        }
-                    } else {
-                        ui.label("All managed apps are already running.");
-                    }
-                } else {
-                    ui.label("No managed apps to check in hidden mode.");
-                }
             });
     }
 }
