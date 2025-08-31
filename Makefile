@@ -9,7 +9,7 @@ endif
 	@{ \
 		VERSION=$$(cargo pkgid | cut -d'#' -f2); \
 		echo "Creating release for version v$${VERSION}..."; \
-		git add Cargo.toml; \
+		git add Cargo.toml Cargo.lock; \
 		git commit -m "Bump version to v$${VERSION}"; \
 		git tag "v$${VERSION}"; \
 		echo "Pushing to main branch and tags..."; \
