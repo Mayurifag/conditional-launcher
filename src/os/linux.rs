@@ -1,6 +1,7 @@
 use super::{OsOperations, PartitionInfo};
 use crate::config::AppConfig;
 use freedesktop_desktop_entry::DesktopEntry;
+use notify_rust::Notification;
 use std::env;
 use std::fs;
 use std::os::unix::process::CommandExt;
@@ -200,5 +201,16 @@ impl OsOperations for LinuxOperations {
         }
 
         false
+    }
+
+    fn send_exit_notification(&self, launched_apps: &[String]) {
+        if launched_apps.is_empty() {
+            return;
+        }
+        let body = format!("Launched: {}", launched_apps.join(", "));
+        let _ = Notification::new()
+            .summary("Conditional Launcher Finished")
+            .body(&body)
+            .show();
     }
 }

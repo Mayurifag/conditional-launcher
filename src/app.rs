@@ -1,11 +1,11 @@
 use crate::config::{AppConfig, Config};
-use crate::os::{OsOperations, PartitionInfo};
+use crate::os::{OsOperations, PartitionInfo, get_os_operations};
 use eframe::egui;
 use freedesktop_icons as icons;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use sysinfo::{Disks, ProcessRefreshKind, RefreshKind, System};
 
 pub struct ConditionStatus {
@@ -46,6 +46,35 @@ pub fn perform_launch_checks(os_ops: &dyn OsOperations, managed_apps: &mut [AppC
     }
 }
 
+pub fn run_hidden_process() {
+    let os_ops = get_os_operations();
+    let mut managed_apps = ConditionalLauncherApp::load_config();
+    let total_apps_to_launch = managed_apps.len();
+
+    if total_apps_to_launch == 0 {
+        return;
+    }
+
+    let mut launched_app_names: Vec<String> = Vec::new();
+
+    loop {
+        perform_launch_checks(os_ops.as_ref(), &mut managed_apps);
+
+        for app in managed_apps.iter().filter(|a| a.launched) {
+            if !launched_app_names.contains(&app.name) {
+                launched_app_names.push(app.name.clone());
+            }
+        }
+
+        if launched_app_names.len() >= total_apps_to_launch {
+            break;
+        }
+
+        std::thread::sleep(Duration::from_secs(5));
+    }
+
+    os_ops.send_exit_notification(&launched_app_names);
+}
 pub struct ConditionalLauncherApp {
     managed_apps: Vec<AppConfig>,
     unmanaged_apps: Vec<AppConfig>,
@@ -168,7 +197,6 @@ impl eframe::App for ConditionalLauncherApp {
         ctx.set_visuals(egui::Visuals::dark());
         ctx.request_repaint_after(std::time::Duration::from_secs(5));
 
-        // Periodically update the system state cache every 5 seconds.
         if self
             .last_cache_update
             .elapsed()
@@ -176,16 +204,13 @@ impl eframe::App for ConditionalLauncherApp {
             .as_secs()
             >= 5
         {
-            // --- Start of expensive operations, now performed only every 5 seconds ---
             self.cached_internet_ok = self.os_ops.check_internet_connection();
             self.cached_disks.refresh(true);
 
-            // Refresh sysinfo process data. This is expensive.
             self.sys.refresh_specifics(
                 RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
             );
 
-            // Update the autostart list if the directory has changed.
             let autostart_path = dirs::config_dir().unwrap().join("autostart");
             if let Ok(metadata) = fs::metadata(&autostart_path) {
                 if let Ok(mod_time) = metadata.modified() {
@@ -196,7 +221,6 @@ impl eframe::App for ConditionalLauncherApp {
                 }
             }
 
-            // Update the cache for running applications.
             self.cached_running_status.clear();
             for app in self.managed_apps.iter().chain(self.unmanaged_apps.iter()) {
                 let is_running = self.os_ops.is_app_running(app, &self.sys);
@@ -205,7 +229,6 @@ impl eframe::App for ConditionalLauncherApp {
             }
 
             self.last_cache_update = SystemTime::now();
-            // --- End of expensive operations ---
         }
 
         let panel_frame = egui::Frame {
@@ -263,7 +286,6 @@ impl eframe::App for ConditionalLauncherApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            // Use the cached running status
                                             let is_running = *self
                                                 .cached_running_status
                                                 .get(&app.name)
@@ -296,7 +318,6 @@ impl eframe::App for ConditionalLauncherApp {
                                     ui.checkbox(&mut app.conditions.internet, "Internet")
                                         .on_hover_text("If checked, this app will only launch if there is an active internet connection.");
 
-                                    // Check conditions for this app using the cached state.
                                     let status = check_app_conditions(
                                         self.os_ops.as_ref(),
                                         app,
@@ -332,7 +353,6 @@ impl eframe::App for ConditionalLauncherApp {
                                                 "None",
                                             );
                                             for p in self.available_partitions.iter() {
-                                                // Always use the mount point for the display text, as it's more user-friendly.
                                                 let display_label = &p.mount_point;
                                                 let details = if p.fs_type.is_empty() {
                                                     format!("({})", p.size)
@@ -415,7 +435,6 @@ impl eframe::App for ConditionalLauncherApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        // Use the cached running status
                                         let is_running = *self
                                             .cached_running_status
                                             .get(&app.name)
@@ -440,6 +459,33 @@ impl eframe::App for ConditionalLauncherApp {
                         }
                     }
                 });
+                ui.separator();
+                ui.heading("Debug");
+
+                let all_managed_apps_running = self.managed_apps.iter().all(|app| {
+                    *self
+                        .cached_running_status
+                        .get(&app.name)
+                        .unwrap_or(&false)
+                });
+
+                if !self.managed_apps.is_empty() {
+                    if !all_managed_apps_running {
+                        if ui
+                            .button("Run Hidden Check")
+                            .on_hover_text(
+                                "Simulate the background process that runs on startup with --hidden.",
+                            )
+                            .clicked()
+                        {
+                            std::thread::spawn(run_hidden_process);
+                        }
+                    } else {
+                        ui.label("All managed apps are already running.");
+                    }
+                } else {
+                    ui.label("No managed apps to check in hidden mode.");
+                }
             });
     }
 }
