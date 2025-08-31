@@ -92,6 +92,25 @@ pub struct ConditionalLauncherApp {
     cached_running_status: HashMap<String, bool>,
 }
 
+pub fn load_all_apps(os_ops: &dyn OsOperations) -> Vec<AppConfig> {
+    let mut managed_apps = ConditionalLauncherApp::load_config();
+    for app in &mut managed_apps {
+        app.is_managed = true;
+    }
+
+    let unmanaged_apps = os_ops.get_autostart_apps();
+
+    let mut apps = managed_apps;
+    for unmanaged_app in unmanaged_apps {
+        if !apps.iter().any(|a| a.name == unmanaged_app.name) {
+            apps.push(unmanaged_app);
+        }
+    }
+
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps
+}
+
 fn load_icon<'a>(
     texture_cache: &'a mut HashMap<String, egui::TextureHandle>,
     ctx: &egui::Context,
@@ -209,12 +228,8 @@ fn draw_condition_controls(
         let status = check_app_conditions(os_ops, app, cached_internet_ok, cached_disks);
 
         if app.conditions.internet {
-            let (text, color) = if status.internet_ok {
-                ("Connected", egui::Color32::GREEN)
-            } else {
-                ("Disconnected", egui::Color32::RED)
-            };
-            ui.label(egui::RichText::new(text).color(color))
+            let text = if status.internet_ok { "✅" } else { "❌" };
+            ui.label(text)
                 .on_hover_text("Current internet connection status.");
         }
 
@@ -253,12 +268,8 @@ fn draw_condition_controls(
         }
 
         if app.conditions.partition_mounted.is_some() {
-            let (text, color) = if status.partition_ok {
-                ("Mounted", egui::Color32::GREEN)
-            } else {
-                ("Not Mounted", egui::Color32::RED)
-            };
-            ui.label(egui::RichText::new(text).color(color))
+            let text = if status.partition_ok { "✅" } else { "❌" };
+            ui.label(text)
                 .on_hover_text("Current status of the selected partition.");
         }
     });
@@ -300,25 +311,9 @@ impl ConditionalLauncherApp {
         }
     }
 
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, apps: Vec<AppConfig>) -> Self {
         let os_ops = crate::os::get_os_operations();
         let available_partitions = os_ops.get_partitions();
-
-        let mut managed_apps = Self::load_config();
-        for app in &mut managed_apps {
-            app.is_managed = true;
-        }
-
-        let unmanaged_apps = os_ops.get_autostart_apps();
-
-        let mut apps = managed_apps;
-        for unmanaged_app in unmanaged_apps {
-            if !apps.iter().any(|a| a.name == unmanaged_app.name) {
-                apps.push(unmanaged_app);
-            }
-        }
-
-        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
         Self {
             apps,
@@ -408,7 +403,10 @@ impl eframe::App for ConditionalLauncherApp {
                     }
 
                     for (i, app) in self.apps.iter_mut().enumerate() {
-                        ui.group(|ui| {
+                        if i > 0 {
+                            ui.add_space(8.0);
+                        }
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
                             draw_app_ui(
                                 ui,
                                 app,
