@@ -19,11 +19,19 @@ Why would I need them if conditions aren't met yet? They waste resources!
 - Portable, no ads, no bs, no electron, etc. Just single binary and configs.
 - Launch app if there is internet connection and/or there is partition mounted.
   Other conditions incoming based on demand (i.e. delay after system boot).
-- Currently tested on KDE Wayland. Other systems (MacOS/Windows) incoming.
+- Currently tested on x64 KDE Wayland. Others (MacOS/Windows/arm) incoming.
 - Thiking to add restart apps via cron or other systems alternatives
 - Dark theme, minimalistic style
 - Automatically adds to your user autostarts and removes if not needed. Auto-
   closes when it done its job.
+
+## Installation
+
+To download and install the latest release for x86_64 Linux, run the following
+command. This will place the binary in `~/.local/bin`.
+
+```bash
+curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/download/conditional-launcher-linux-x86_64 -o ~/.local/bin/conditional-launcher && chmod +x ~/.local/bin/conditional-launcher
 
 ## Roadmap
 
