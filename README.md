@@ -31,7 +31,8 @@ To download and install the latest release for x86_64 Linux, run the following
 command. This will place the binary in `~/.local/bin`.
 
 ```bash
-curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/download/conditional-launcher-linux-x86_64 -o ~/.local/bin/conditional-launcher && chmod +x ~/.local/bin/conditional-launcher
+curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/download/conditional-launcher-linux-x86_64 -o ~/.local/bin/conditional-launcher && chmod +x ~/.local/bin/conditional-launcher && ~/.local/bin/conditional-launcher
+```
 
 ## Roadmap
 

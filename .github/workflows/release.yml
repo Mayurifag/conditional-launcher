@@ -3,34 +3,35 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
-
-permissions:
-  contents: write
+      - 'v*.*.*'
 
 jobs:
   release:
-    name: Create Release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Set up environment variables
-        run: |
-          echo "APP_NAME=conditional-launcher" >> $GITHUB_ENV
-          echo "ASSET_NAME=conditional-launcher-linux-x86_64" >> $GITHUB_ENV
+      - name: Build release binary
+        run: cargo build --release --verbose
 
-      - name: Build binary
-        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
+      - name: Prepare artifact for release
+        run: mv target/release/conditional-launcher target/release/conditional-launcher-linux-x86_64
 
-      - name: Prepare asset
-        run: mv target/x86_64-unknown-linux-gnu/release/${{ env.APP_NAME }} ${{ env.ASSET_NAME }}
-
-      - name: Create Release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET_NAME }}
+          files: target/release/conditional-launcher-linux-x86_64
