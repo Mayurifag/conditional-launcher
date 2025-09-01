@@ -1,0 +1,99 @@
+import { CheckBox, ComboBox, Button, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+
+struct Conditions {
+    internet: bool,
+    partition_mounted: string,
+}
+
+struct AppConfig {
+    name: string,
+    is_managed: bool,
+    conditions: Conditions,
+    icon: image,
+}
+
+struct PartitionInfo {
+    mount_point: string,
+    fs_type: string,
+    size: string,
+}
+
+export component MainWindow inherits Window {
+    in-out property<[AppConfig]> apps;
+    in property<[PartitionInfo]> available_partitions;
+    in property<[string]> partition_options;
+    callback save_config();
+    callback close_window();
+
+    background: #282a36;
+    title: "Conditional Launcher";
+    width: 600px;
+    height: 400px;
+
+    VerticalBox {
+        padding: 10px;
+        spacing: 10px;
+
+        ScrollView {
+            VerticalBox {
+                spacing: 5px;
+                for app[index] in apps : HorizontalBox {
+                    alignment: start;
+                    spacing: 10px;
+
+                    Image {
+                        source: app.icon;
+                        width: 32px;
+                        height: 32px;
+                    }
+
+                    Text {
+                        text: app.name;
+                        vertical-alignment: center;
+                        color: #f8f8f2;
+                    }
+
+                    CheckBox {
+                        checked: app.is_managed;
+                        toggled => {
+                            root.apps[index].is_managed = self.checked;
+                        }
+                    }
+                    Text { text:"Managed"; color: #f8f8f2; vertical-alignment: center; }
+
+                    HorizontalBox {
+                        visible: app.is_managed;
+                        spacing: 10px;
+                        CheckBox {
+                            checked: app.conditions.internet;
+                            toggled => {
+                                root.apps[index].conditions.internet = self.checked;
+                            }
+                        }
+                        Text { text:"Internet"; color: #f8f8f2; vertical-alignment: center; }
+
+                        ComboBox {
+                            model: root.partition_options;
+                            current-value: app.conditions.partition_mounted == "" ? "None" : app.conditions.partition_mounted;
+                            selected(value) => {
+                                if value == "None" {
+                                    root.apps[index].conditions.partition_mounted = "";
+                                } else {
+                                    root.apps[index].conditions.partition_mounted = value;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Button {
+            text: "Save and Close";
+            clicked => {
+                root.save_config();
+                root.close_window();
+            }
+        }
+    }
+}
