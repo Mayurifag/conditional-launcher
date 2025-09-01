@@ -33,6 +33,46 @@ impl LinuxOperations {
     fn launcher_desktop_file_path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("autostart/conditional-launcher.desktop"))
     }
+
+    fn backup_directory() -> Option<PathBuf> {
+        dirs::config_dir().map(|d| d.join("conditional-launcher/desktop-backups"))
+    }
+
+    fn get_backup_path(original_path: &Path) -> Option<PathBuf> {
+        let backup_dir = Self::backup_directory()?;
+        let file_name = original_path.file_name()?;
+        Some(backup_dir.join(file_name))
+    }
+
+    fn create_placeholder_desktop_file(
+        original_path: &Path,
+        app_config: &AppConfig,
+    ) -> Result<(), std::io::Error> {
+        let mut placeholder_content = format!(
+            "[Desktop Entry]\n\
+             Name={} (Managed by Conditional Launcher)\n\
+             Comment=This application is temporarily managed by Conditional Launcher\n\
+             Exec=/bin/true\n\
+             Type=Application\n\
+             Terminal=false\n\
+             NoDisplay=true\n",
+            app_config.name
+        );
+
+        if let Some(icon) = &app_config.icon {
+            placeholder_content.push_str(&format!("Icon={}\n", icon));
+        }
+
+        fs::write(original_path, placeholder_content)
+    }
+
+    fn is_placeholder_file(path: &Path) -> bool {
+        if let Ok(content) = fs::read_to_string(path) {
+            content.contains("Managed by Conditional Launcher")
+        } else {
+            false
+        }
+    }
 }
 
 impl OsOperations for LinuxOperations {
@@ -81,6 +121,9 @@ impl OsOperations for LinuxOperations {
                         }
                     }
                     if path.extension().map_or(false, |e| e == "desktop") {
+                        if Self::is_placeholder_file(&path) {
+                            continue;
+                        }
                         if let Some(app_config) = Self::parse_desktop_file(path) {
                             apps.push(app_config);
                         }
@@ -92,19 +135,35 @@ impl OsOperations for LinuxOperations {
     }
 
     fn manage_app(&self, app: &AppConfig) -> bool {
-        if let Some(path) = &app.original_path {
-            let mut disabled_path = path.as_os_str().to_owned();
-            disabled_path.push(".disabled");
-            return fs::rename(path, PathBuf::from(disabled_path)).is_ok();
+        if let Some(original_path) = &app.original_path {
+            if let Some(backup_path) = Self::get_backup_path(original_path) {
+                if let Some(backup_dir) = Self::backup_directory() {
+                    if let Err(_) = fs::create_dir_all(&backup_dir) {
+                        return false;
+                    }
+                }
+
+                if fs::rename(original_path, &backup_path).is_ok() {
+                    if Self::create_placeholder_desktop_file(original_path, app).is_ok() {
+                        return true;
+                    } else {
+                        let _ = fs::rename(&backup_path, original_path);
+                        return false;
+                    }
+                }
+            }
         }
         false
     }
 
     fn unmanage_app(&self, app: &AppConfig) -> bool {
-        if let Some(path) = &app.original_path {
-            let mut disabled_path = path.as_os_str().to_owned();
-            disabled_path.push(".disabled");
-            return fs::rename(PathBuf::from(disabled_path), path).is_ok();
+        if let Some(original_path) = &app.original_path {
+            if let Some(backup_path) = Self::get_backup_path(original_path) {
+                if backup_path.exists() {
+                    let _ = fs::remove_file(original_path);
+                    return fs::rename(&backup_path, original_path).is_ok();
+                }
+            }
         }
         false
     }

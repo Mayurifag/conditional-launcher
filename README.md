@@ -14,6 +14,8 @@ I created this app to have universal and convenient way across my systems to:
 
 Why would I need them if conditions aren't met yet? They waste resources!
 
+![Screenshot](Screenshot.webp)
+
 ## Features
 
 - Portable, no ads, no bs, no electron, etc. Just single binary and configs.
@@ -24,8 +26,6 @@ Why would I need them if conditions aren't met yet? They waste resources!
 - Dark theme, minimalistic style
 - Automatically adds to your user autostarts and removes if not needed. Auto-
   closes when it done its job.
-
-![Screenshot](Screenshot.webp)
 
 ## Installation
 
