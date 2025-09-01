@@ -2,6 +2,8 @@
 
 mod app;
 mod config;
+mod daemon;
+mod gui;
 mod os;
 
 use eframe::egui;
@@ -10,7 +12,7 @@ fn main() -> Result<(), eframe::Error> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.contains(&"--hidden".to_string()) {
-        app::run_hidden_process();
+        daemon::run_hidden_process();
         Ok(())
     } else {
         let os_ops = os::get_os_operations();
@@ -37,7 +39,7 @@ fn main() -> Result<(), eframe::Error> {
         eframe::run_native(
             "Conditional Launcher",
             options,
-            Box::new(|cc| Ok(Box::new(app::ConditionalLauncherApp::new(cc, apps)))),
+            Box::new(|cc| Ok(Box::new(gui::GuiApp::new(cc, apps)))),
         )
     }
 }

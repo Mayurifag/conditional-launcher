@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::PathBuf;
 
 mod path_serde {
@@ -53,4 +54,31 @@ pub struct Conditions {
     pub internet: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_mounted: Option<String>,
+}
+
+impl Config {
+    pub fn config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap()
+            .join("conditional-launcher/managed_apps.toml")
+    }
+
+    pub fn load_config() -> Vec<AppConfig> {
+        fs::read_to_string(Self::config_path())
+            .ok()
+            .and_then(|toml_str| toml::from_str::<Config>(&toml_str).ok())
+            .map(|config| config.apps)
+            .unwrap_or_default()
+    }
+
+    pub fn save_config(apps: &[AppConfig]) {
+        let managed_apps: Vec<_> = apps.iter().filter(|a| a.is_managed).cloned().collect();
+
+        let config = Config { apps: managed_apps };
+        if let Some(parent) = Self::config_path().parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        let toml = toml::to_string_pretty(&config).unwrap();
+        fs::write(Self::config_path(), toml).ok();
+    }
 }
