@@ -60,7 +60,7 @@ impl LinuxOperations {
         );
 
         if let Some(icon) = &app_config.icon {
-            placeholder_content.push_str(&format!("Icon={}\n", icon));
+            placeholder_content.push_str(&format!("Icon={icon}\n"));
         }
 
         fs::write(original_path, placeholder_content)
@@ -120,7 +120,7 @@ impl OsOperations for LinuxOperations {
                             continue;
                         }
                     }
-                    if path.extension().map_or(false, |e| e == "desktop") {
+                    if path.extension().is_some_and(|e| e == "desktop") {
                         if Self::is_placeholder_file(&path) {
                             continue;
                         }
@@ -138,7 +138,7 @@ impl OsOperations for LinuxOperations {
         if let Some(original_path) = &app.original_path {
             if let Some(backup_path) = Self::get_backup_path(original_path) {
                 if let Some(backup_dir) = Self::backup_directory() {
-                    if let Err(_) = fs::create_dir_all(&backup_dir) {
+                    if fs::create_dir_all(&backup_dir).is_err() {
                         return false;
                     }
                 }
@@ -210,7 +210,7 @@ impl OsOperations for LinuxOperations {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).ok();
             }
-            let name = format!("Conditional launch {} apps", managed_app_count);
+            let name = format!("Conditional launch {managed_app_count} apps");
             let content = format!(
                 "[Desktop Entry]\n\
                  Name={}\n\

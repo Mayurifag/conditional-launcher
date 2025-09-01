@@ -17,7 +17,7 @@ pub fn check_app_conditions(
         .conditions
         .partition_mounted
         .as_ref()
-        .map_or(true, |p| os_ops.is_partition_mounted(p, disks));
+        .is_none_or(|p| os_ops.is_partition_mounted(p, disks));
     let internet_ok = !app.conditions.internet || has_internet;
     ConditionStatus {
         internet_ok,

@@ -72,7 +72,7 @@ fn load_icon<'a>(
 
     if let Some(path) = icons::lookup(icon_name).with_size(32).find() {
         if let Ok(image_data) = fs::read(&path) {
-            let color_image = if path.extension().map_or(false, |e| e == "svg") {
+            let color_image = if path.extension().is_some_and(|e| e == "svg") {
                 let rtree = usvg::Tree::from_data(&image_data, &usvg::Options::default()).ok()?;
                 let svg_size = rtree.size();
                 let (width, height) = (32, 32);
@@ -151,7 +151,7 @@ fn draw_condition_controls(
                     ui.selectable_value(
                         &mut app.conditions.partition_mounted,
                         Some(p.mount_point.clone()),
-                        format!("{} {}", display_label, details),
+                        format!("{display_label} {details}"),
                     );
                 }
             });
@@ -186,7 +186,7 @@ impl eframe::App for GuiApp {
             let autostart_path = dirs::config_dir().unwrap().join("autostart");
             if let Ok(metadata) = fs::metadata(&autostart_path) {
                 if let Ok(mod_time) = metadata.modified() {
-                    if self.last_autostart_check.map_or(true, |t| t != mod_time) {
+                    if self.last_autostart_check != Some(mod_time) {
                         self.refresh_autostart_list();
                         self.last_autostart_check = Some(mod_time);
                     }
@@ -298,25 +298,22 @@ impl eframe::App for GuiApp {
                                                 .cached_running_status
                                                 .get(&app.name)
                                                 .unwrap_or(&false);
-                                            if !is_running {
-                                                if ui
+                                            if !is_running
+                                                && ui
                                                     .button("Run")
                                                     .on_hover_text("Launch this application now.")
                                                     .clicked()
-                                                {
-                                                    self.app.os_ops.launch_app(app);
-                                                }
+                                            {
+                                                self.app.os_ops.launch_app(app);
                                             }
-                                            if app.is_managed {
-                                                if ui.button("Edit").clicked() {
-                                                    self.editing_app_name = Some(app.name.clone());
-                                                    self.edit_buffer_command = app.command.clone();
-                                                    self.edit_buffer_working_dir = app
-                                                        .working_dir
-                                                        .as_ref()
-                                                        .map(|p| p.to_string_lossy().to_string())
-                                                        .unwrap_or_default();
-                                                }
+                                            if app.is_managed && ui.button("Edit").clicked() {
+                                                self.editing_app_name = Some(app.name.clone());
+                                                self.edit_buffer_command = app.command.clone();
+                                                self.edit_buffer_working_dir = app
+                                                    .working_dir
+                                                    .as_ref()
+                                                    .map(|p| p.to_string_lossy().to_string())
+                                                    .unwrap_or_default();
                                             }
                                         },
                                     );

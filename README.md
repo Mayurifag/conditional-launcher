@@ -41,6 +41,4 @@ curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/downlo
 - Migrate from `egui` to [something using *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode). Use Dracula colors
 - Add macos functionality
 - Add custom commands functionality. Add possibility to cron them.
-- Is it possible to contain all needed info in autostart shortcut across all
-  systems?
 - Release cargo and think about simpler installation (brew/aur?)
