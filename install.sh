@@ -26,7 +26,7 @@ echo "Creating desktop file..."
 cat << EOF > "$DESKTOP_FILE_PATH"
 [Desktop Entry]
 Name=Conditional Launcher
-Exec=conditional-launcher
+Exec=$BINARY_PATH
 Icon=conditional-launcher
 Type=Application
 Categories=Utility;
