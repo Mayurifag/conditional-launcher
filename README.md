@@ -18,8 +18,8 @@ Autostart apps after boot on **your** conditions.
 
 ## How it works
 
-- Writes itself to autostart if there is at least one app managed by it and removes
-  itself if not. Backups original shortcuts in app config dir.
+- Writes itself to autostart if there is at least one app managed by it and
+  removes itself if not. Backups original shortcuts in app config dir.
 - Checks internet via request to
   `http://connectivitycheck.gstatic.com/generate_204`. Thats 99.99% not blocked,
   fast (no TLS handshaking). Also checks DNS resolution.
@@ -52,7 +52,8 @@ Why would I need those apps if conditions aren't met yet? They waste resources!
 
 - Add icon
 - Change installation path so it will be searchable in app launchers
-- Migrate from `egui` to [something using *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode). Use Dracula colors
+- Migrate from `egui` to [something with *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode).
+  Use Dracula colors
 - Add macos support + release
 - Add windows support + release
 - Add custom commands functionality. Add possibility to cron them. That way

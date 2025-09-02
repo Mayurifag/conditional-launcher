@@ -28,6 +28,4 @@ pub fn run_hidden_process() {
 
         std::thread::sleep(Duration::from_secs(5));
     }
-
-    os_ops.send_exit_notification(&launched_app_names);
 }

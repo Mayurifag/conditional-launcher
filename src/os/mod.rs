@@ -22,7 +22,6 @@ pub trait OsOperations {
     fn add_self_to_autostart(&self, managed_app_count: usize);
     fn remove_self_from_autostart(&self);
     fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool;
-    fn send_exit_notification(&self, launched_apps: &[String]);
 }
 
 pub fn get_os_operations() -> Box<dyn OsOperations> {
@@ -58,7 +57,6 @@ pub fn get_os_operations() -> Box<dyn OsOperations> {
             fn is_app_running(&self, _app: &AppConfig, _sys: &System) -> bool {
                 false
             }
-            fn send_exit_notification(&self, _launched_apps: &[String]) {}
         }
         Box::new(UnsupportedOperations)
     }
