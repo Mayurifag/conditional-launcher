@@ -1,31 +1,30 @@
 # conditional-launcher
 
-## Description
-
-Simple Rust (btw) GUI application, which will autostart apps after boot on
-**your** conditions.
-
-## Personal example of usage
-
-I created this app to have universal and convenient way across my systems to:
-
-- Launch Nextcloud and messengers only if there is internet connection
-- Launch Steam only when disk with games is mounted
-
-Why would I need them if conditions aren't met yet? They waste resources!
+Autostart apps after boot on **your** conditions.
 
 ![Screenshot](Screenshot.webp)
 
 ## Features
 
-- Portable, no ads, no bs, no electron, etc. Just single binary and configs.
-- Launch app if there is internet connection and/or there is partition mounted.
-  Other conditions incoming based on demand (i.e. delay after system boot).
-- Currently tested on x64 KDE Wayland. Others (MacOS/Windows/arm) incoming.
-- Thiking to add restart apps via cron or other systems alternatives
-- Dark theme, minimalistic style
-- Automatically adds to your user autostarts and removes if not needed. Auto-
-  closes when it done its job.
+- Autolaunch your desktop apps if there is internet connection or there is some
+  partition mounted.
+- Keeps autostart shortcuts in place, but makes them no-op — apps think they are
+  autostarted like nothing happened and won't mess with mechanism.
+- In system settings of KDE in Autostart page you will clearly see whats managed
+- Portable, native, no ads, no bs, no electron. Just single binary and configs.
+- Dark theme, minimalistic style.
+- Currently tested on x64 KDE Wayland. Others (MacOS/Windows/arm64) incoming if
+  needed.
+
+## How it works
+
+- Writes itself to autostart if there is at least one app managed by it and removes
+  itself if not. Backups original shortcuts in app config dir.
+- Checks internet via request to
+  `http://connectivitycheck.gstatic.com/generate_204`. Thats 99.99% not blocked,
+  fast (no TLS handshaking). Also checks DNS resolution.
+- On system boot launches in background, checks conditions and launches apps.
+  Exits after that with notification. Dead simple, just works.
 
 ## Installation
 
@@ -36,10 +35,24 @@ command. This will place the binary in `~/.local/bin`.
 curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/download/conditional-launcher-linux-x86_64 -o ~/.local/bin/conditional-launcher && chmod +x ~/.local/bin/conditional-launcher && ~/.local/bin/conditional-launcher
 ```
 
+If you want to remove binary sometime later, unmanage all apps — this will get
+your autostart shortcuts back like nothing happened to them, so you will be
+free to delete the binary after that.
+
+## Personal example of usage
+
+I created this app to have universal and convenient way across my systems to:
+
+- Launch Nextcloud and messengers only if there is internet connection
+- Launch Steam only when disk with games is mounted
+
+Why would I need them if conditions aren't met yet? They waste resources!
+
 ## Roadmap
 
 - Migrate from `egui` to [something using *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode). Use Dracula colors
-- Add macos functionality
+- Add macos support + release
+- Add windows support + release
 - Add custom commands functionality. Add possibility to cron them. That way
   ayugram/espanso might be restarted easily daily to prevent their memory leaks
 - Release cargo and think about simpler installation (brew/aur?)
