@@ -50,6 +50,8 @@ Why would I need them if conditions aren't met yet? They waste resources!
 
 ## Roadmap
 
+- Add icon
+- Change installation path so it will be searchable in app launchers
 - Migrate from `egui` to [something using *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode). Use Dracula colors
 - Add macos support + release
 - Add windows support + release
