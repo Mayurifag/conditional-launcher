@@ -46,7 +46,7 @@ I created this app to have universal and convenient way across my systems to:
 - Launch Nextcloud and messengers only if there is internet connection
 - Launch Steam only when disk with games is mounted
 
-Why would I need them if conditions aren't met yet? They waste resources!
+Why would I need those apps if conditions aren't met yet? They waste resources!
 
 ## Roadmap
 
