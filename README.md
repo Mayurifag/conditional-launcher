@@ -9,7 +9,8 @@ Autostart apps after boot on **your** conditions.
 - Autolaunch your desktop apps if there is internet connection or there is some
   partition mounted.
 - Keeps autostart shortcuts in place, but makes them no-op — apps think they are
-  autostarted like nothing happened and won't mess with mechanism.
+  autostarted like nothing happened and won't mess.
+- Edit launch params — add "silent" options, "startintray" or similar.
 - In system settings of KDE in Autostart page you will clearly see whats managed
 - Portable, native, no ads, no bs, no electron. Just single binary and configs.
 - Dark theme, minimalistic style.
@@ -31,9 +32,7 @@ Autostart apps after boot on **your** conditions.
 To download and install the latest release for x86_64 Linux, run the following
 command. This will place the binary in `~/.local/bin`.
 
-```bash
-curl -L https://github.com/Mayurifag/conditional-launcher/releases/latest/download/conditional-launcher-linux-x86_64 -o ~/.local/bin/conditional-launcher && chmod +x ~/.local/bin/conditional-launcher && ~/.local/bin/conditional-launcher
-```
+    curl -sL https://raw.githubusercontent.com/Mayurifag/conditional-launcher/main/install.sh | bash
 
 If you want to remove binary sometime later, unmanage all apps — this will get
 your autostart shortcuts back like nothing happened to them, so you will be
@@ -50,10 +49,9 @@ Why would I need those apps if conditions aren't met yet? They waste resources!
 
 ## Roadmap
 
-- Add icon
-- Change installation path so it will be searchable in app launchers
 - Migrate from `egui` to [something with *retaining* mode](https://github.com/emilk/egui?tab=readme-ov-file#why-immediate-mode).
   Use Dracula colors
+- Uninstall script including getting back original desktop files automatically.
 - Add macos support + release
 - Add windows support + release
 - Add custom commands functionality. Add possibility to cron them. That way

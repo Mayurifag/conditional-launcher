@@ -214,6 +214,7 @@ impl OsOperations for LinuxOperations {
                 "[Desktop Entry]\n\
                  Name={}\n\
                  Exec=\"{}\" --hidden\n\
+                 Icon=conditional-launcher\n\
                  Type=Application\n\
                  Terminal=false\n",
                 name,
