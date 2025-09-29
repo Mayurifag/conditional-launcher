@@ -56,4 +56,6 @@ Why would I need those apps if conditions aren't met yet? They waste resources!
 - Add windows support + release
 - Add custom commands functionality. Add possibility to cron them. That way
   ayugram/espanso might be restarted easily daily to prevent their memory leaks
+  and other problems.
 - Release cargo and think about simpler installation (brew/aur?)
+- I probably might add 'status' CLI command to see current status debug info.
