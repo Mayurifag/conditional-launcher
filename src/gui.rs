@@ -2,17 +2,13 @@ use crate::app::{ConditionalLauncherApp, check_app_conditions};
 use crate::config::AppConfig;
 use crate::os::{OsOperations, PartitionInfo};
 use eframe::egui;
-#[cfg(target_os = "linux")]
-use freedesktop_icons as icons;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use sysinfo::{Disks, ProcessRefreshKind, RefreshKind, System};
 
 pub struct GuiApp {
     pub app: ConditionalLauncherApp,
-    #[cfg(target_os = "linux")]
     texture_cache: HashMap<String, egui::TextureHandle>,
     last_autostart_check: Option<SystemTime>,
     sys: System,
@@ -31,7 +27,6 @@ impl GuiApp {
 
         Self {
             app,
-            #[cfg(target_os = "linux")]
             texture_cache: HashMap::new(),
             last_autostart_check: None,
             sys: System::new_all(),
@@ -64,48 +59,23 @@ impl GuiApp {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn load_icon<'a>(
+fn get_or_load_icon<'a>(
     texture_cache: &'a mut HashMap<String, egui::TextureHandle>,
     ctx: &egui::Context,
-    icon_name: &str,
+    app: &AppConfig,
+    os_ops: &dyn OsOperations,
 ) -> Option<&'a egui::TextureHandle> {
-    if texture_cache.contains_key(icon_name) {
-        return texture_cache.get(icon_name);
+    let icon_key = app.icon.as_deref().filter(|s| !s.is_empty())?.to_string();
+
+    if !texture_cache.contains_key(&icon_key)
+        && let Some((rgba, [w, h])) = os_ops.get_app_icon_rgba(app)
+    {
+        let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+        let texture = ctx.load_texture(&icon_key, color_image, Default::default());
+        texture_cache.insert(icon_key.clone(), texture);
     }
 
-    if let Some(path) = icons::lookup(icon_name).with_size(32).find() {
-        if let Ok(image_data) = fs::read(&path) {
-            let color_image = if path.extension().is_some_and(|e| e == "svg") {
-                let rtree = usvg::Tree::from_data(&image_data, &usvg::Options::default()).ok()?;
-                let svg_size = rtree.size();
-                let (width, height) = (32, 32);
-                let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
-                let sx = width as f32 / svg_size.width();
-                let sy = height as f32 / svg_size.height();
-                let transform = resvg::tiny_skia::Transform::from_scale(sx, sy);
-                resvg::render(&rtree, transform, &mut pixmap.as_mut());
-                Some(egui::ColorImage::from_rgba_unmultiplied(
-                    [pixmap.width() as usize, pixmap.height() as usize],
-                    pixmap.data(),
-                ))
-            } else {
-                image::load_from_memory(&image_data).ok().map(|image| {
-                    let image_rgba = image.to_rgba8();
-                    let size = [image.width() as usize, image.height() as usize];
-                    egui::ColorImage::from_rgba_unmultiplied(size, &image_rgba.into_raw())
-                })
-            };
-
-            if let Some(color_image) = color_image {
-                let texture =
-                    ctx.load_texture(icon_name.to_string(), color_image, Default::default());
-                texture_cache.insert(icon_name.to_string(), texture);
-                return texture_cache.get(icon_name);
-            }
-        }
-    }
-    None
+    texture_cache.get(&icon_key)
 }
 
 fn draw_condition_controls(
@@ -187,13 +157,14 @@ impl eframe::App for GuiApp {
                 RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
             );
 
-            let autostart_path = dirs::config_dir().unwrap().join("autostart");
-            if let Ok(metadata) = fs::metadata(&autostart_path)
-                && let Ok(mod_time) = metadata.modified()
-                && self.last_autostart_check != Some(mod_time)
-            {
+            // Refresh autostart list every 30 seconds (cross-platform)
+            let should_refresh = self
+                .last_autostart_check
+                .map(|t| t.elapsed().unwrap_or_default().as_secs() >= 30)
+                .unwrap_or(true);
+            if should_refresh {
                 self.refresh_autostart_list();
-                self.last_autostart_check = Some(mod_time);
+                self.last_autostart_check = Some(SystemTime::now());
             }
 
             self.cached_running_status.clear();
@@ -229,30 +200,17 @@ impl eframe::App for GuiApp {
                         }
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                #[cfg(target_os = "linux")]
-                                {
-                                    let mut icon_shown = false;
-                                    if let Some(icon_name) = &app.icon {
-                                        if let Some(texture) =
-                                            load_icon(&mut self.texture_cache, ctx, icon_name)
-                                        {
-                                            ui.add(
-                                                egui::Image::new(texture)
-                                                    .max_size(egui::vec2(20.0, 20.0)),
-                                            );
-                                            icon_shown = true;
-                                        }
-                                    }
-                                    if !icon_shown {
-                                        let fallback = app.name.chars().next().unwrap_or('?');
-                                        ui.add_sized(
-                                            [20.0, 20.0],
-                                            egui::Label::new(fallback.to_string()),
-                                        );
-                                    }
-                                }
-                                #[cfg(not(target_os = "linux"))]
-                                {
+                                let icon_texture = get_or_load_icon(
+                                    &mut self.texture_cache,
+                                    ctx,
+                                    app,
+                                    self.app.os_ops.as_ref(),
+                                );
+                                if let Some(texture) = icon_texture {
+                                    ui.add(
+                                        egui::Image::new(texture).max_size(egui::vec2(20.0, 20.0)),
+                                    );
+                                } else {
                                     let fallback = app.name.chars().next().unwrap_or('?');
                                     ui.add_sized(
                                         [20.0, 20.0],

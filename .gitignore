@@ -1,11 +1,6 @@
 /target/
 
-.bg-shell/
-
-.gsd/
-
-# ── GSD baseline (auto-generated) ──
-.gsd
+# Common generated and local files
 .DS_Store
 Thumbs.db
 *.swp

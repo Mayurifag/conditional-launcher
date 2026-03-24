@@ -1,7 +1,6 @@
 use super::{OsOperations, PartitionInfo};
 use crate::config::AppConfig;
 use freedesktop_desktop_entry::DesktopEntry;
-use reqwest;
 use std::env;
 use std::fs;
 use std::os::unix::process::CommandExt;
@@ -47,7 +46,7 @@ impl LinuxOperations {
         original_path: &Path,
         app_config: &AppConfig,
     ) -> Result<(), std::io::Error> {
-        let mut placeholder_content = format!(
+        let mut content = format!(
             "[Desktop Entry]\n\
              Name={} (Managed by Conditional Launcher)\n\
              Comment=This application is temporarily managed by Conditional Launcher\n\
@@ -57,34 +56,26 @@ impl LinuxOperations {
              NoDisplay=true\n",
             app_config.name
         );
-
         if let Some(icon) = &app_config.icon {
-            placeholder_content.push_str(&format!("Icon={icon}\n"));
+            content.push_str(&format!("Icon={icon}\n"));
         }
-
-        fs::write(original_path, placeholder_content)
+        fs::write(original_path, content)
     }
 
     fn is_placeholder_file(path: &Path) -> bool {
-        if let Ok(content) = fs::read_to_string(path) {
-            content.contains("Managed by Conditional Launcher")
-        } else {
-            false
-        }
+        fs::read_to_string(path)
+            .map(|c| c.contains("Managed by Conditional Launcher"))
+            .unwrap_or(false)
     }
 }
 
 impl OsOperations for LinuxOperations {
     fn check_internet_connection(&self) -> bool {
-        match reqwest::blocking::get("http://connectivitycheck.gstatic.com/generate_204") {
-            Ok(response) => response.status().is_success(),
-            Err(_) => false,
-        }
+        super::shared_check_internet()
     }
 
     fn is_partition_mounted(&self, path: &str, disks: &Disks) -> bool {
-        let mount_path = Path::new(path);
-        disks.iter().any(|disk| disk.mount_point() == mount_path)
+        super::shared_is_partition_mounted(path, disks)
     }
 
     fn launch_app(&self, app: &AppConfig) {
@@ -93,7 +84,6 @@ impl OsOperations for LinuxOperations {
         if let Some(dir) = &app.working_dir {
             cmd.current_dir(dir);
         }
-
         unsafe {
             cmd.pre_exec(|| {
                 if libc::setsid() == -1 {
@@ -103,7 +93,6 @@ impl OsOperations for LinuxOperations {
                 }
             });
         }
-
         let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
 
@@ -114,10 +103,12 @@ impl OsOperations for LinuxOperations {
             if let Ok(entries) = fs::read_dir(autostart_dir) {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
-                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                        if file_name == "conditional-launcher.desktop" {
-                            continue;
-                        }
+                    if path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n == "conditional-launcher.desktop")
+                    {
+                        continue;
                     }
                     if path.extension().is_some_and(|e| e == "desktop") {
                         if Self::is_placeholder_file(&path) {
@@ -141,13 +132,11 @@ impl OsOperations for LinuxOperations {
                         return false;
                     }
                 }
-
                 if fs::rename(original_path, &backup_path).is_ok() {
                     if Self::create_placeholder_desktop_file(original_path, app).is_ok() {
                         return true;
                     } else {
                         let _ = fs::rename(&backup_path, original_path);
-                        return false;
                     }
                 }
             }
@@ -168,36 +157,28 @@ impl OsOperations for LinuxOperations {
     }
 
     fn get_partitions(&self) -> Vec<PartitionInfo> {
-        let mut disks = Disks::new();
-        disks.refresh(true);
+        let disks = Disks::new_with_refreshed_list();
         let mut partitions = Vec::new();
         for disk in disks.iter() {
             let mount_point_str = disk.mount_point().to_string_lossy();
             if !mount_point_str.starts_with('/') {
-                continue; // Skip non-standard mount points
-            }
-
-            let fs_type_str = disk.file_system().to_string_lossy();
-
-            // Filter out unwanted virtual/temporary filesystems by name
-            if fs_type_str.starts_with("squashfs")
-                || fs_type_str.starts_with("overlay")
-                || fs_type_str.starts_with("tmpfs")
-                || fs_type_str.starts_with("devtmpfs")
-                || fs_type_str.starts_with("fuse.")
-            {
                 continue;
             }
-
-            let mount_point = mount_point_str.to_string();
-            let size_bytes = disk.total_space();
-            let size = format!("{:.1} GB", size_bytes as f64 / 1_000_000_000.0);
-            let fs_type = fs_type_str.to_string();
-
+            let fs_type_str = disk.file_system().to_string_lossy();
+            if matches!(
+                fs_type_str.as_ref(),
+                s if s.starts_with("squashfs")
+                    || s.starts_with("overlay")
+                    || s.starts_with("tmpfs")
+                    || s.starts_with("devtmpfs")
+                    || s.starts_with("fuse.")
+            ) {
+                continue;
+            }
             partitions.push(PartitionInfo {
-                mount_point,
-                fs_type,
-                size,
+                mount_point: mount_point_str.to_string(),
+                fs_type: fs_type_str.to_string(),
+                size: format!("{:.1} GB", disk.total_space() as f64 / 1_000_000_000.0),
             });
         }
         partitions
@@ -209,15 +190,13 @@ impl OsOperations for LinuxOperations {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).ok();
             }
-            let name = format!("Conditional launch {managed_app_count} apps");
             let content = format!(
                 "[Desktop Entry]\n\
-                 Name={}\n\
+                 Name=Conditional launch {managed_app_count} apps\n\
                  Exec=\"{}\" --hidden\n\
                  Icon=conditional-launcher\n\
                  Type=Application\n\
                  Terminal=false\n",
-                name,
                 exe_path.display()
             );
             fs::write(path, content).ok();
@@ -233,34 +212,33 @@ impl OsOperations for LinuxOperations {
     }
 
     fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool {
-        if let Some(process_name) = app
-            .command
-            .split_whitespace()
-            .next()
-            .and_then(|p| Path::new(p).file_name())
-            .and_then(|f| f.to_str())
-        {
-            if sys
-                .processes_by_name(process_name.as_ref())
-                .next()
-                .is_some()
-            {
-                return true;
-            }
-        }
+        super::shared_is_app_running(app, sys)
+    }
 
-        if sys.processes_by_name(app.name.as_ref()).next().is_some() {
-            return true;
-        }
+    fn get_app_icon_rgba(&self, app: &AppConfig) -> Option<(Vec<u8>, [usize; 2])> {
+        let icon_name = app.icon.as_deref()?;
+        let path = freedesktop_icons::lookup(icon_name).with_size(32).find()?;
+        let image_data = std::fs::read(&path).ok()?;
 
-        if sys
-            .processes_by_name(app.name.to_lowercase().as_ref())
-            .next()
-            .is_some()
-        {
-            return true;
+        if path.extension().is_some_and(|e| e == "svg") {
+            let rtree = usvg::Tree::from_data(&image_data, &usvg::Options::default()).ok()?;
+            let svg_size = rtree.size();
+            let (w, h) = (32u32, 32u32);
+            let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+            let transform = resvg::tiny_skia::Transform::from_scale(
+                w as f32 / svg_size.width(),
+                h as f32 / svg_size.height(),
+            );
+            resvg::render(&rtree, transform, &mut pixmap.as_mut());
+            Some((
+                pixmap.data().to_vec(),
+                [pixmap.width() as usize, pixmap.height() as usize],
+            ))
+        } else {
+            let img = image::load_from_memory(&image_data).ok()?;
+            let rgba = img.to_rgba8();
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            Some((rgba.into_raw(), [w, h]))
         }
-
-        false
     }
 }
