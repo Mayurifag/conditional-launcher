@@ -2,6 +2,7 @@ use crate::app::{ConditionalLauncherApp, check_app_conditions};
 use crate::config::AppConfig;
 use crate::os::{OsOperations, PartitionInfo};
 use eframe::egui;
+#[cfg(target_os = "linux")]
 use freedesktop_icons as icons;
 use std::collections::HashMap;
 use std::fs;
@@ -11,6 +12,7 @@ use sysinfo::{Disks, ProcessRefreshKind, RefreshKind, System};
 
 pub struct GuiApp {
     pub app: ConditionalLauncherApp,
+    #[cfg(target_os = "linux")]
     texture_cache: HashMap<String, egui::TextureHandle>,
     last_autostart_check: Option<SystemTime>,
     sys: System,
@@ -29,6 +31,7 @@ impl GuiApp {
 
         Self {
             app,
+            #[cfg(target_os = "linux")]
             texture_cache: HashMap::new(),
             last_autostart_check: None,
             sys: System::new_all(),
@@ -61,6 +64,7 @@ impl GuiApp {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn load_icon<'a>(
     texture_cache: &'a mut HashMap<String, egui::TextureHandle>,
     ctx: &egui::Context,
@@ -184,13 +188,12 @@ impl eframe::App for GuiApp {
             );
 
             let autostart_path = dirs::config_dir().unwrap().join("autostart");
-            if let Ok(metadata) = fs::metadata(&autostart_path) {
-                if let Ok(mod_time) = metadata.modified() {
-                    if self.last_autostart_check != Some(mod_time) {
-                        self.refresh_autostart_list();
-                        self.last_autostart_check = Some(mod_time);
-                    }
-                }
+            if let Ok(metadata) = fs::metadata(&autostart_path)
+                && let Ok(mod_time) = metadata.modified()
+                && self.last_autostart_check != Some(mod_time)
+            {
+                self.refresh_autostart_list();
+                self.last_autostart_check = Some(mod_time);
             }
 
             self.cached_running_status.clear();
@@ -226,19 +229,30 @@ impl eframe::App for GuiApp {
                         }
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let mut icon_shown = false;
-                                if let Some(icon_name) = &app.icon {
-                                    if let Some(texture) =
-                                        load_icon(&mut self.texture_cache, ctx, icon_name)
-                                    {
-                                        ui.add(
-                                            egui::Image::new(texture)
-                                                .max_size(egui::vec2(20.0, 20.0)),
+                                #[cfg(target_os = "linux")]
+                                {
+                                    let mut icon_shown = false;
+                                    if let Some(icon_name) = &app.icon {
+                                        if let Some(texture) =
+                                            load_icon(&mut self.texture_cache, ctx, icon_name)
+                                        {
+                                            ui.add(
+                                                egui::Image::new(texture)
+                                                    .max_size(egui::vec2(20.0, 20.0)),
+                                            );
+                                            icon_shown = true;
+                                        }
+                                    }
+                                    if !icon_shown {
+                                        let fallback = app.name.chars().next().unwrap_or('?');
+                                        ui.add_sized(
+                                            [20.0, 20.0],
+                                            egui::Label::new(fallback.to_string()),
                                         );
-                                        icon_shown = true;
                                     }
                                 }
-                                if !icon_shown {
+                                #[cfg(not(target_os = "linux"))]
+                                {
                                     let fallback = app.name.chars().next().unwrap_or('?');
                                     ui.add_sized(
                                         [20.0, 20.0],
@@ -319,17 +333,17 @@ impl eframe::App for GuiApp {
                                     );
                                 });
 
-                                if let Some(wd) = &app.working_dir {
-                                    if !wd.as_os_str().is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "Working Dir: {}",
-                                                wd.display()
-                                            ))
-                                            .small()
-                                            .monospace(),
-                                        );
-                                    }
+                                if let Some(wd) = &app.working_dir
+                                    && !wd.as_os_str().is_empty()
+                                {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Working Dir: {}",
+                                            wd.display()
+                                        ))
+                                        .small()
+                                        .monospace(),
+                                    );
                                 }
                             }
 
@@ -362,18 +376,18 @@ impl eframe::App for GuiApp {
                         });
                     }
 
-                    if let Some(i) = app_to_manage {
-                        if self.app.os_ops.manage_app(&self.app.apps[i]) {
-                            self.app.apps[i].is_managed = true;
-                            needs_save = true;
-                        }
+                    if let Some(i) = app_to_manage
+                        && self.app.os_ops.manage_app(&self.app.apps[i])
+                    {
+                        self.app.apps[i].is_managed = true;
+                        needs_save = true;
                     }
 
-                    if let Some(i) = app_to_unmanage {
-                        if self.app.os_ops.unmanage_app(&self.app.apps[i]) {
-                            self.app.apps[i].is_managed = false;
-                            needs_save = true;
-                        }
+                    if let Some(i) = app_to_unmanage
+                        && self.app.os_ops.unmanage_app(&self.app.apps[i])
+                    {
+                        self.app.apps[i].is_managed = false;
+                        needs_save = true;
                     }
 
                     if needs_save {

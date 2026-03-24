@@ -1,4 +1,9 @@
-.PHONY: release
+.PHONY: ci release
+
+ci:
+	cargo fmt --check
+	cargo clippy -- -D warnings
+	cargo check
 
 release:
 ifndef bump

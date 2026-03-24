@@ -1,4 +1,4 @@
-use crate::app::{perform_launch_checks, ConditionalLauncherApp};
+use crate::app::{ConditionalLauncherApp, perform_launch_checks};
 use crate::os::get_os_operations;
 use std::time::Duration;
 
