@@ -1,8 +1,18 @@
 use crate::config::AppConfig;
+use std::path::Path;
 use sysinfo::{Disks, System};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+
+#[cfg(target_os = "windows")]
+pub mod windows;
+
+#[cfg(target_os = "macos")]
+pub mod macos;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+compile_error!("Unsupported platform — only Linux, Windows and macOS are supported");
 
 #[derive(Clone, Debug, Default)]
 pub struct PartitionInfo {
@@ -22,42 +32,63 @@ pub trait OsOperations {
     fn add_self_to_autostart(&self, managed_app_count: usize);
     fn remove_self_from_autostart(&self);
     fn is_app_running(&self, app: &AppConfig, sys: &System) -> bool;
+    /// Returns raw RGBA pixels and [width, height] for the app's icon, if available.
+    fn get_app_icon_rgba(&self, app: &AppConfig) -> Option<(Vec<u8>, [usize; 2])>;
 }
 
+// ── Shared helpers used by every platform ────────────────────────────────────
+
+pub fn shared_check_internet() -> bool {
+    reqwest::blocking::get("http://connectivitycheck.gstatic.com/generate_204")
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+pub fn shared_is_partition_mounted(path: &str, disks: &Disks) -> bool {
+    let mount_path = Path::new(path);
+    disks.iter().any(|disk| disk.mount_point() == mount_path)
+}
+
+pub fn shared_is_app_running(app: &AppConfig, sys: &System) -> bool {
+    if let Some(process_name) = app
+        .command
+        .split_whitespace()
+        .next()
+        .and_then(|p| Path::new(p).file_name())
+        .and_then(|f| f.to_str())
+        && sys
+            .processes_by_name(process_name.as_ref())
+            .next()
+            .is_some()
+    {
+        return true;
+    }
+    if sys.processes_by_name(app.name.as_ref()).next().is_some() {
+        return true;
+    }
+    if sys
+        .processes_by_name(app.name.to_lowercase().as_ref())
+        .next()
+        .is_some()
+    {
+        return true;
+    }
+    false
+}
+
+// ── Platform dispatch ─────────────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
 pub fn get_os_operations() -> Box<dyn OsOperations> {
-    #[cfg(target_os = "linux")]
-    {
-        Box::new(linux::LinuxOperations)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        struct UnsupportedOperations;
-        impl OsOperations for UnsupportedOperations {
-            fn check_internet_connection(&self) -> bool {
-                false
-            }
-            fn is_partition_mounted(&self, _path: &str, _disks: &Disks) -> bool {
-                false
-            }
-            fn launch_app(&self, _app: &AppConfig) {}
-            fn get_autostart_apps(&self) -> Vec<AppConfig> {
-                vec![]
-            }
-            fn manage_app(&self, _app: &AppConfig) -> bool {
-                false
-            }
-            fn unmanage_app(&self, _app: &AppConfig) -> bool {
-                false
-            }
-            fn get_partitions(&self) -> Vec<PartitionInfo> {
-                vec![]
-            }
-            fn add_self_to_autostart(&self, _managed_app_count: usize) {}
-            fn remove_self_from_autostart(&self) {}
-            fn is_app_running(&self, _app: &AppConfig, _sys: &System) -> bool {
-                false
-            }
-        }
-        Box::new(UnsupportedOperations)
-    }
+    Box::new(linux::LinuxOperations)
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_os_operations() -> Box<dyn OsOperations> {
+    Box::new(windows::WindowsOperations)
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_os_operations() -> Box<dyn OsOperations> {
+    Box::new(macos::MacosOperations)
 }

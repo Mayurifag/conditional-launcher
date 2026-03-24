@@ -5,20 +5,26 @@ edition = "2024"
 
 [dependencies]
 dirs = "6.0.0"
-eframe = "0.32.1"
-egui = "0.32.1"
-image = { version = "0.25.6", features = ["png", "jpeg"] }
-libc = "0.2.175"
-reqwest = { version = "0.12.23", features = ["blocking"] }
-resvg = "0.45.1"
-serde = { version = "1.0.219", features = ["derive"] }
-sysinfo = "0.37.0"
-toml = "0.9.5"
-usvg = "0.45.1"
+eframe = "0.33"
+egui = "0.33"
+image = { version = "0.25", features = ["png", "jpeg"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+sysinfo = "0.38"
+toml = "0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-freedesktop-desktop-entry = "0.7.14"
-freedesktop-icons = "0.4.0"
+freedesktop-desktop-entry = "0.7"
+freedesktop-icons = "0.4"
+libc = "0.2"
+resvg = "0.47"
+usvg = "0.47"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.56"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1.8"
 
 [profile.release]
 lto = "fat"
