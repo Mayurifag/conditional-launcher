@@ -1,98 +1,109 @@
-use crate::config::{AppConfig, Config};
+use crate::conditions::Conditions;
+use crate::config::{AppConfig, ConfigStore};
 use crate::os::{OsOperations, PartitionInfo};
-use sysinfo::Disks;
+use anyhow::{Context, Result};
 
-pub struct ConditionStatus {
-    pub internet_ok: bool,
-    pub partition_ok: bool,
-}
-
-pub fn check_app_conditions(
-    os_ops: &dyn OsOperations,
-    app: &AppConfig,
-    has_internet: bool,
-    disks: &Disks,
-) -> ConditionStatus {
-    let partition_ok = app
-        .conditions
-        .partition_mounted
-        .as_ref()
-        .is_none_or(|p| os_ops.is_partition_mounted(p, disks));
-    let internet_ok = !app.conditions.internet || has_internet;
-    ConditionStatus {
-        internet_ok,
-        partition_ok,
-    }
-}
-
-pub fn perform_launch_checks(os_ops: &dyn OsOperations, managed_apps: &mut [AppConfig]) {
-    let has_internet = os_ops.check_internet_connection();
-    let mut disks = Disks::new();
-    disks.refresh(true);
-
-    for app in managed_apps.iter_mut() {
-        if app.launched {
-            continue;
-        }
-
-        let status = check_app_conditions(os_ops, app, has_internet, &disks);
-
-        if status.internet_ok && status.partition_ok {
-            os_ops.launch_app(app);
-            app.launched = true;
-        }
-    }
-}
-
-pub struct ConditionalLauncherApp {
+pub struct Launcher {
     pub apps: Vec<AppConfig>,
     pub os_ops: Box<dyn OsOperations>,
     pub available_partitions: Vec<PartitionInfo>,
+    config: ConfigStore,
 }
 
-pub fn load_all_apps(os_ops: &dyn OsOperations) -> Vec<AppConfig> {
-    let mut managed_apps = ConditionalLauncherApp::load_config();
-    for app in &mut managed_apps {
-        app.is_managed = true;
+impl Launcher {
+    pub fn load() -> Result<Self> {
+        Self::new(crate::os::get_os_operations(), ConfigStore::for_user()?)
     }
 
-    let unmanaged_apps = os_ops.get_autostart_apps();
-
-    let mut apps = managed_apps;
-    for unmanaged_app in unmanaged_apps {
-        if !apps.iter().any(|a| a.name == unmanaged_app.name) {
-            apps.push(unmanaged_app);
-        }
-    }
-
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    apps
-}
-
-impl ConditionalLauncherApp {
-    pub fn load_config() -> Vec<AppConfig> {
-        Config::load_config()
-    }
-
-    pub fn new(apps: Vec<AppConfig>) -> Self {
-        let os_ops = crate::os::get_os_operations();
-        let available_partitions = os_ops.get_partitions();
-
-        Self {
+    pub fn new(os_ops: Box<dyn OsOperations>, config: ConfigStore) -> Result<Self> {
+        let apps = config.load()?;
+        let available_partitions = os_ops.get_partitions()?;
+        let mut app = Self {
             apps,
             os_ops,
             available_partitions,
+            config,
+        };
+        app.refresh_autostart_list()?;
+        Ok(app)
+    }
+
+    pub fn refresh_autostart_list(&mut self) -> Result<()> {
+        let discovered = self.os_ops.get_autostart_apps()?;
+        self.apps.retain(|app| app.is_managed);
+        for app in discovered {
+            if !self.apps.iter().any(|other| other.name == app.name) {
+                self.apps.push(app);
+            }
+        }
+        self.apps.sort_by_cached_key(|app| app.name.to_lowercase());
+        Ok(())
+    }
+
+    pub fn save(&self) -> Result<()> {
+        self.config.save(&self.apps)?;
+        self.sync_autostart()
+    }
+
+    fn sync_autostart(&self) -> Result<()> {
+        let count = self.apps.iter().filter(|app| app.is_managed).count();
+        if count == 0 {
+            self.os_ops.remove_self_from_autostart()
+        } else {
+            self.os_ops.add_self_to_autostart(count)
         }
     }
 
-    pub fn save_config(&mut self) {
-        Config::save_config(&self.apps);
-
-        let managed_app_count = self.apps.iter().filter(|a| a.is_managed).count();
-        if managed_app_count == 0 {
-            self.os_ops.remove_self_from_autostart();
-        } else {
-            self.os_ops.add_self_to_autostart(managed_app_count);
+    pub fn update_conditions(&mut self, index: usize, conditions: Conditions) -> Result<()> {
+        let previous = std::mem::replace(&mut self.apps[index].conditions, conditions);
+        let should_manage = self.apps[index].conditions.requires_management();
+        if should_manage == self.apps[index].is_managed {
+            if let Err(error) = self.config.save(&self.apps) {
+                self.apps[index].conditions = previous;
+                return Err(error);
+            }
+            return self.sync_autostart();
         }
+        if should_manage {
+            self.apps[index].is_managed = true;
+            if let Err(error) = self.sync_autostart() {
+                self.apps[index].is_managed = false;
+                self.apps[index].conditions = previous;
+                return Err(error);
+            }
+            // Save the original command before replacing its system autostart entry.
+            if let Err(error) = self.config.save(&self.apps) {
+                self.apps[index].is_managed = false;
+                self.apps[index].conditions = previous;
+                self.sync_autostart()
+                    .with_context(|| format!("Restore launcher autostart after: {error:#}"))?;
+                return Err(error);
+            }
+            if let Err(error) = self.os_ops.manage_app(&self.apps[index]) {
+                self.apps[index].is_managed = false;
+                self.apps[index].conditions = previous;
+                self.config
+                    .save(&self.apps)
+                    .with_context(|| format!("Restore configuration after: {error:#}"))?;
+                self.sync_autostart()
+                    .with_context(|| format!("Restore launcher autostart after: {error:#}"))?;
+                return Err(error);
+            }
+            return Ok(());
+        }
+        if let Err(error) = self.os_ops.unmanage_app(&self.apps[index]) {
+            self.apps[index].conditions = previous;
+            return Err(error);
+        }
+        self.apps[index].is_managed = false;
+        if let Err(error) = self.config.save(&self.apps) {
+            self.apps[index].is_managed = true;
+            self.apps[index].conditions = previous;
+            self.os_ops
+                .manage_app(&self.apps[index])
+                .with_context(|| format!("Restore management after: {error:#}"))?;
+            return Err(error);
+        }
+        self.sync_autostart()
     }
 }

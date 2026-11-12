@@ -7,14 +7,14 @@ jobs:
   markdown-link-check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: tcort/github-action-markdown-link-check@v1
 
   markdown-lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - uses: DavidAnson/markdownlint-cli2-action@v20
+        uses: actions/checkout@v7
+      - uses: DavidAnson/markdownlint-cli2-action@v25
         with:
           globs: '**/*.md'

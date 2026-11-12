@@ -1,31 +1,36 @@
-use crate::app::{ConditionalLauncherApp, perform_launch_checks};
-use crate::os::get_os_operations;
+use crate::{
+    config::{AppConfig, ConfigStore},
+    os::{OsOperations, get_os_operations},
+};
+use anyhow::{Context, Result};
 use std::time::Duration;
+use sysinfo::Disks;
 
-pub fn run_hidden_process() {
-    let os_ops = get_os_operations();
-    let mut managed_apps = ConditionalLauncherApp::load_config();
-    let total_apps_to_launch = managed_apps.len();
-
-    if total_apps_to_launch == 0 {
-        return;
-    }
-
-    let mut launched_app_names: Vec<String> = Vec::new();
-
-    loop {
-        perform_launch_checks(os_ops.as_ref(), &mut managed_apps);
-
-        for app in managed_apps.iter().filter(|a| a.launched) {
-            if !launched_app_names.contains(&app.name) {
-                launched_app_names.push(app.name.clone());
+pub fn perform_launch_checks(os_ops: &dyn OsOperations, apps: &mut [AppConfig]) -> Result<()> {
+    let has_internet = apps
+        .iter()
+        .any(|app| !app.launched && app.conditions.internet)
+        && os_ops.check_internet_connection();
+    let disks = Disks::new_with_refreshed_list().context("Read disk information")?;
+    for app in apps.iter_mut().filter(|app| !app.launched) {
+        if app.conditions.check(os_ops, has_internet, &disks).ready() {
+            match os_ops.launch_app(app) {
+                Ok(()) => app.launched = true,
+                Err(error) => eprintln!("{error:#}"),
             }
         }
-
-        if launched_app_names.len() >= total_apps_to_launch {
-            break;
-        }
-
-        std::thread::sleep(Duration::from_secs(5));
     }
+    Ok(())
+}
+
+pub fn run() -> Result<()> {
+    let os_ops = get_os_operations();
+    let mut apps = ConfigStore::for_user()?.load()?;
+    while apps.iter().any(|app| !app.launched) {
+        perform_launch_checks(os_ops.as_ref(), &mut apps)?;
+        if apps.iter().any(|app| !app.launched) {
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    }
+    Ok(())
 }

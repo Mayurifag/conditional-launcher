@@ -1,8 +1,12 @@
+use crate::conditions::Conditions;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 mod path_serde {
+    use serde::ser::Error;
     use serde::{Deserializer, Serializer};
     use std::path::PathBuf;
 
@@ -10,8 +14,13 @@ mod path_serde {
     where
         S: Serializer,
     {
-        let s = path.as_ref().map(|p| p.to_string_lossy().to_string());
-        serializer.serialize_str(&s.unwrap_or_default())
+        let value = match path {
+            Some(path) => path
+                .to_str()
+                .ok_or_else(|| S::Error::custom("Cannot store a non-UTF-8 path in TOML"))?,
+            None => "",
+        };
+        serializer.serialize_str(value)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
@@ -27,12 +36,12 @@ mod path_serde {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub struct Config {
-    pub apps: Vec<AppConfig>,
+#[derive(Deserialize)]
+struct Config {
+    apps: Vec<AppConfig>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub name: String,
     pub command: String,
@@ -43,42 +52,69 @@ pub struct AppConfig {
     pub icon: Option<String>,
     #[serde(with = "path_serde", default)]
     pub working_dir: Option<PathBuf>,
+    // Legacy configs did not retain the registry value type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expand_environment: Option<bool>,
     #[serde(skip)]
     pub launched: bool,
     #[serde(skip)]
     pub is_managed: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct Conditions {
-    pub internet: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partition_mounted: Option<String>,
+pub struct ConfigStore {
+    path: PathBuf,
 }
 
-impl Config {
-    pub fn config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap()
-            .join("conditional-launcher/managed_apps.toml")
+impl ConfigStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
     }
 
-    pub fn load_config() -> Vec<AppConfig> {
-        fs::read_to_string(Self::config_path())
-            .ok()
-            .and_then(|toml_str| toml::from_str::<Config>(&toml_str).ok())
-            .map(|config| config.apps)
-            .unwrap_or_default()
+    pub fn for_user() -> Result<Self> {
+        Ok(Self::new(
+            dirs::config_dir()
+                .context("Cannot find the user configuration directory")?
+                .join("conditional-launcher/managed_apps.toml"),
+        ))
     }
 
-    pub fn save_config(apps: &[AppConfig]) {
-        let managed_apps: Vec<_> = apps.iter().filter(|a| a.is_managed).cloned().collect();
-
-        let config = Config { apps: managed_apps };
-        if let Some(parent) = Self::config_path().parent() {
-            fs::create_dir_all(parent).ok();
+    pub fn load(&self) -> Result<Vec<AppConfig>> {
+        let path = &self.path;
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error).with_context(|| format!("Read {}", path.display())),
+        };
+        let mut config: Config =
+            toml::from_str(&content).with_context(|| format!("Parse {}", path.display()))?;
+        for app in &mut config.apps {
+            app.is_managed = true;
         }
-        let toml = toml::to_string_pretty(&config).unwrap();
-        fs::write(Self::config_path(), toml).ok();
+        Ok(config.apps)
+    }
+
+    pub fn save(&self, apps: &[AppConfig]) -> Result<()> {
+        #[derive(Serialize)]
+        struct ManagedApps<'a> {
+            apps: Vec<&'a AppConfig>,
+        }
+
+        let config = ManagedApps {
+            apps: apps.iter().filter(|app| app.is_managed).collect(),
+        };
+        let content = toml::to_string_pretty(&config).context("Serialize managed applications")?;
+        let path = &self.path;
+        let parent = path.parent().context("Configuration path has no parent")?;
+        fs::create_dir_all(parent).with_context(|| format!("Create {}", parent.display()))?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)
+            .with_context(|| format!("Create a temporary config in {}", parent.display()))?;
+        file.write_all(content.as_bytes())
+            .with_context(|| format!("Write {}", path.display()))?;
+        file.as_file()
+            .sync_all()
+            .context("Flush managed applications")?;
+        file.persist(path)
+            .with_context(|| format!("Replace {}", path.display()))?;
+        Ok(())
     }
 }
