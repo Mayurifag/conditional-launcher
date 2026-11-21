@@ -10,6 +10,7 @@ pub(super) fn draw(
     os_ops: &dyn OsOperations,
     has_internet: bool,
     disks: &Disks,
+    keepassxc_unlocked: bool,
 ) {
     ui.horizontal(|ui| {
         ui.checkbox(&mut app.conditions.internet, "Internet")
@@ -47,9 +48,23 @@ pub(super) fn draw(
                 }
             });
         if app.conditions.partition_mounted.is_some() {
-            let status = app.conditions.check(os_ops, has_internet, disks);
+            let status = app
+                .conditions
+                .check(os_ops, has_internet, disks, keepassxc_unlocked);
             ui.label(if status.partition_ok { "✅" } else { "❌" })
                 .on_hover_text("Current status of the selected partition.");
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add_enabled(
+            os_ops.supports_keepassxc() || app.conditions.keepassxc_unlocked,
+            egui::Checkbox::new(&mut app.conditions.keepassxc_unlocked, "KeePassXC unlocked"),
+        )
+        .on_hover_text(
+            "Wait for KeePassXC's default database to be exposed through Secret Service and unlocked. Linux only; no passwords are read.",
+        );
+        if app.conditions.keepassxc_unlocked {
+            ui.label(if keepassxc_unlocked { "✅" } else { "❌" });
         }
     });
 }

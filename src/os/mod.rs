@@ -14,6 +14,9 @@ mod autostart;
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(target_os = "linux")]
+mod keepassxc;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -29,7 +32,21 @@ pub struct PartitionInfo {
     pub size: String,
 }
 
+pub trait ConditionWatcher {
+    fn keepassxc_unlocked(&self) -> Result<bool>;
+    fn wait(&mut self, timeout: Option<Duration>) -> Result<()>;
+}
+
 pub trait OsOperations {
+    fn supports_keepassxc(&self) -> bool {
+        false
+    }
+    fn keepassxc_unlocked(&self) -> Result<bool> {
+        Ok(false)
+    }
+    fn watch_keepassxc(&self) -> Result<Option<Box<dyn ConditionWatcher>>> {
+        Ok(None)
+    }
     fn check_internet_connection(&self) -> bool {
         shared_check_internet()
     }

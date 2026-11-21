@@ -11,10 +11,11 @@ const AUTOSTART_INTERVAL: Duration = Duration::from_secs(30);
 
 pub(super) struct Status {
     pub has_internet: bool,
+    pub keepassxc_unlocked: bool,
     pub disks: Disks,
     pub running: HashMap<String, bool>,
     system: System,
-    network_check: Option<Receiver<bool>>,
+    condition_check: Option<Receiver<Result<(bool, bool)>>>,
     last_refresh: Option<Instant>,
     last_autostart_refresh: Option<Instant>,
 }
@@ -23,23 +24,28 @@ impl Status {
     pub fn new() -> Result<Self> {
         Ok(Self {
             has_internet: false,
+            keepassxc_unlocked: false,
             disks: Disks::new().context("Initialize disk information")?,
             running: HashMap::new(),
             system: System::new().context("Initialize process information")?,
-            network_check: None,
+            condition_check: None,
             last_refresh: None,
             last_autostart_refresh: None,
         })
     }
 
     pub fn refresh(&mut self, app: &mut Launcher) -> Result<()> {
-        if let Some(receiver) = &self.network_check {
+        if let Some(receiver) = &self.condition_check {
             match receiver.try_recv() {
-                Ok(connected) => {
+                Ok(result) => {
+                    self.condition_check = None;
+                    self.has_internet = false;
+                    self.keepassxc_unlocked = false;
+                    let (connected, unlocked) = result?;
                     self.has_internet = connected;
-                    self.network_check = None;
+                    self.keepassxc_unlocked = unlocked;
                 }
-                Err(mpsc::TryRecvError::Disconnected) => self.network_check = None,
+                Err(mpsc::TryRecvError::Disconnected) => self.condition_check = None,
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
@@ -49,12 +55,20 @@ impl Status {
         {
             return Ok(());
         }
-        if self.network_check.is_none() {
+        if self.condition_check.is_none() {
             let (sender, receiver) = mpsc::channel();
-            self.network_check = Some(receiver);
-            // A network request must not block egui's event loop.
+            self.condition_check = Some(receiver);
+            let needs_internet = app.apps.iter().any(|app| app.conditions.internet);
+            let needs_keepassxc = app.apps.iter().any(|app| app.conditions.keepassxc_unlocked);
+            // Network and D-Bus requests must not block egui's event loop.
             std::thread::spawn(move || {
-                let _ = sender.send(os::get_os_operations().check_internet_connection());
+                let os_ops = os::get_os_operations();
+                let status = (|| {
+                    let unlocked = needs_keepassxc && os_ops.keepassxc_unlocked()?;
+                    let connected = needs_internet && os_ops.check_internet_connection();
+                    Ok((connected, unlocked))
+                })();
+                let _ = sender.send(status);
             });
         }
         self.disks.refresh(true);

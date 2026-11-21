@@ -88,6 +88,18 @@ impl LinuxOperations {
 }
 
 impl OsOperations for LinuxOperations {
+    fn supports_keepassxc(&self) -> bool {
+        true
+    }
+
+    fn keepassxc_unlocked(&self) -> Result<bool> {
+        super::keepassxc::is_unlocked()
+    }
+
+    fn watch_keepassxc(&self) -> Result<Option<Box<dyn super::ConditionWatcher>>> {
+        Ok(Some(Box::new(super::keepassxc::Watcher::new()?)))
+    }
+
     fn launch_app(&self, app: &AppConfig) -> Result<()> {
         ensure!(!app.command.trim().is_empty(), "Empty command");
         let mut cmd = Command::new("sh");

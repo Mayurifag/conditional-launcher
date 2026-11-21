@@ -13,7 +13,7 @@ use std::time::Duration;
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Launcher::load()?;
     let status = Status::new()?;
-    const HEIGHT_PER_APP: f32 = 95.0;
+    const HEIGHT_PER_APP: f32 = 120.0;
     const PADDING: f32 = 30.0;
     const MIN_HEIGHT: f32 = 150.0;
     const MAX_HEIGHT: f32 = 700.0;
@@ -129,6 +129,7 @@ impl GuiApp {
                     self.app.os_ops.as_ref(),
                     self.status.has_internet,
                     &self.status.disks,
+                    self.status.keepassxc_unlocked,
                 );
                 if app.conditions != previous {
                     let conditions = std::mem::replace(&mut app.conditions, previous);

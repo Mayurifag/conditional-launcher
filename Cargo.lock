@@ -794,13 +794,15 @@ dependencies = [
 
 [[package]]
 name = "conditional-launcher"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-io",
  "dirs 7.0.0",
  "eframe",
  "freedesktop-desktop-entry",
  "freedesktop-icons",
+ "futures-lite",
  "image",
  "libc",
  "plist",
@@ -814,6 +816,7 @@ dependencies = [
  "usvg",
  "windows-sys 0.61.2",
  "winreg",
+ "zbus",
 ]
 
 [[package]]

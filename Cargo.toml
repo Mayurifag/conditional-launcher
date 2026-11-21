@@ -1,6 +1,6 @@
 [package]
 name = "conditional-launcher"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99.1"
 
@@ -19,12 +19,15 @@ tempfile = "3.27.0"
 toml = "1.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+async-io = "2.6"
+futures-lite = "2.6"
 freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 libc = "0.2"
 resvg = "0.50"
 shlex = "2.0"
 usvg = "0.50"
+zbus = "5.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.56"
