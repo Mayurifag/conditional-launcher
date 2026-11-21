@@ -3,18 +3,15 @@ use crate::{
     os::{OsOperations, get_os_operations},
 };
 use anyhow::{Context, Result, ensure};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::Disks;
 
 pub fn perform_launch_checks(
     os_ops: &dyn OsOperations,
     apps: &mut [AppConfig],
+    has_internet: bool,
     keepassxc_unlocked: bool,
 ) -> Result<()> {
-    let has_internet = apps
-        .iter()
-        .any(|app| !app.launched && app.conditions.internet)
-        && os_ops.check_internet_connection();
     let disks = Disks::new_with_refreshed_list().context("Read disk information")?;
     for app in apps.iter_mut().filter(|app| !app.launched) {
         if app
@@ -44,11 +41,21 @@ pub fn run() -> Result<()> {
         !needs_keepassxc || watcher.is_some(),
         "The KeePassXC unlock condition requires Linux with Secret Service integration"
     );
+    let mut has_internet = false;
+    let mut last_internet_check: Option<Instant> = None;
     while apps.iter().any(|app| !app.launched) {
+        if apps
+            .iter()
+            .any(|app| !app.launched && app.conditions.internet)
+            && last_internet_check.is_none_or(|time| time.elapsed() >= Duration::from_secs(5))
+        {
+            has_internet = os_ops.check_internet_connection();
+            last_internet_check = Some(Instant::now());
+        }
         let keepassxc_unlocked = watcher
             .as_ref()
             .map_or(Ok(false), |watcher| watcher.keepassxc_unlocked())?;
-        perform_launch_checks(os_ops.as_ref(), &mut apps, keepassxc_unlocked)?;
+        perform_launch_checks(os_ops.as_ref(), &mut apps, has_internet, keepassxc_unlocked)?;
         let pending: Vec<_> = apps.iter().filter(|app| !app.launched).collect();
         if pending.is_empty() {
             break;
